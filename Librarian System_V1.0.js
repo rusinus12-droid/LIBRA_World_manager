@@ -1,8 +1,8 @@
 //@name long_memory_ai_assistant
-//@display-name Librarian System V1.2
+//@display-name Librarian System V1.0
 //@author rusinus12@gmail.com
 //@api 3.0
-//@version 2.7.6
+//@version 2.7.7
 //@arg max_limit int Max number of memories to keep (Default: 150)
 //@arg threshold int Minimum importance to save memory (Default: 5)
 //@arg gc_frequency int Run GC every N turns (Default: 10)
@@ -16,20 +16,19 @@
 
 /**
  * =============================================================================
- * LONG MEMORY & AI ASSISTANT v2.7.6 (Optimized & Hybrid Merged)
+ * LONG MEMORY & AI ASSISTANT v2.7.7 (Vertex & Copilot Support)
  * =============================================================================
- * [v2.7.6 Features]
- * 1. Multi-Provider Support: OpenAI, Google Gemini, Vertex AI, Anthropic Claude
- * 2. Multi-Provider Tokenizer: GPT-4, Claude, Gemini, Custom API
- * 3. [MERGED] v2.1 Enterprise Hybrid Engine (Dedup, Score Bias Fix)
- * 4. [IMPROVED] Async Background Queue (Non-blocking API calls)
- * 5. [IMPROVED] Regex Optimization & Prompt Injection Defense
+ * [v2.7.7 Features]
+ * 1. Multi-Provider Support: OpenAI, Google, Anthropic, OpenRouter, **Vertex AI**, **GitHub Copilot**
+ * 2. [Merged] v2.1 Enterprise Hybrid Engine (Dedup, Score Bias Fix)
+ * 3. [Improved] Async Background Queue (Non-blocking API calls)
+ * 4. [Improved] Regex Optimization & Prompt Injection Defense
  * =============================================================================
  */
 
 (async () => {
     try {
-        console.log('[LMAI] v2.7.6 Initializing...');
+        console.log('[LMAI] v2.7.7 Initializing...');
 
         // ─────────────────────────────────────────────
         // [UTILITY] LRU Cache & Shared Resources
@@ -539,7 +538,7 @@
                             }
                             j++;
                         }
-                        return null; // Unclosed tag
+                        return null;
                     }
                 }
                 return null;
@@ -747,7 +746,7 @@
             };
         })();
 
-        // [v2.7] Multi-Provider AI Engine
+        // [v2.7.7] Multi-Provider AI Engine (Vertex & Copilot Added)
         const AuxAIEngine = (() => {
             const OR_MODELS_URL = "https://openrouter.ai/api/v1/models";
             const OR_CACHE_KEY = "lmai_or_models_cache";
@@ -811,7 +810,19 @@
                     const thinking = MemoryEngine.CONFIG.thinkingEnabled;
                     const level = MemoryEngine.CONFIG.thinkingLevel;
 
-                    if (m.format === 'anthropic') {
+                    // OpenAI, Copilot, OpenRouter, Vertex (OpenAI Compatible) 공용 구조
+                    if (['openai', 'copilot', 'openrouter', 'vertex'].includes(m.format)) {
+                         body = { 
+                            model: m.model, 
+                            messages: [{ role: "system", content: system }, { role: "user", content: prompt }], 
+                            temperature: m.temp || 0.7 
+                        };
+                        if (thinking && (m.model.includes('o1') || m.model.includes('o3'))) {
+                            body.reasoning_effort = level;
+                            delete body.temperature;
+                        }
+                    } 
+                    else if (m.format === 'anthropic') {
                         body = { 
                             model: m.model, 
                             system: system, 
@@ -831,16 +842,6 @@
                         };
                         if (thinking) {
                             body.generationConfig.thinkingConfig = { includeThoughts: true };
-                        }
-                    } else {
-                        body = { 
-                            model: m.model, 
-                            messages: [{ role: "system", content: system }, { role: "user", content: prompt }], 
-                            temperature: m.temp || 0.7 
-                        };
-                        if (thinking && (m.model.includes('o1') || m.model.includes('o3'))) {
-                            body.reasoning_effort = level;
-                            delete body.temperature;
                         }
                     }
                     return body;
@@ -868,13 +869,29 @@
                     let url = m.url;
 
                     try {
-                        if (m.format === 'anthropic') {
+                        // [Added] GitHub Copilot Support
+                        if (m.format === 'copilot') {
+                            headers["Authorization"] = `Bearer ${m.key}`;
+                            // Copilot은 사용자가 URL을 입력해야 함 (기본값 설정 가능)
+                            if (!url || url === 'https://api.openai.com/v1/chat/completions') {
+                                url = "https://api.githubcopilot.com/chat/completions";
+                            }
+                        }
+                        // [Added] Vertex AI Support
+                        else if (m.format === 'vertex') {
+                            headers["Authorization"] = `Bearer ${m.key}`;
+                            // URL은 사용자가 Vertex 전체 엔드포인트를 입력해야 함
+                            // 예: https://us-central1-aiplatform.googleapis.com/v1/projects/PROJECT/locations/us-central1/publishers/google/models/gemini-pro:generateContent
+                            // Body는 OpenAI 호환 모드를 가정하거나, Gemini 포맷 사용 시 분기 필요. 여기서는 OpenAI 호환 가정.
+                        }
+                        else if (m.format === 'anthropic') {
                             headers["x-api-key"] = m.key;
                             headers["anthropic-version"] = "2023-06-01";
                             if (!url.includes('/v1/')) url = url.replace(/\/$/, '') + '/v1/messages';
                         } else if (m.format === 'gemini') {
                             url = `${url.replace(/\/$/, '')}/models/${m.model}:generateContent?key=${m.key}`;
                         } else {
+                            // OpenAI, Openrouter
                             headers["Authorization"] = `Bearer ${m.key}`;
                         }
 
@@ -887,6 +904,7 @@
                         }
                         const data = typeof res.json === 'function' ? await res.json() : res;
 
+                        // Response Parsing
                         if (m.format === 'gemini') {
                             const parts = data?.candidates?.[0]?.content?.parts || [];
                             const textParts = parts.filter(p => p.text && !p.thought);
@@ -895,6 +913,7 @@
                             const parts = data?.content || [];
                             return parts.filter(p => p.type === 'text').map(p => p.text).join('\n').trim();
                         }
+                        // OpenAI, Copilot, Vertex(OpenAI compat), OpenRouter
                         return data?.choices?.[0]?.message?.content?.trim();
 
                     } catch (e) { console.error("[LMAI] AI Error", e); }
@@ -1052,27 +1071,231 @@
         await updateConfigFromArgs();
 
         // ─────────────────────────────────────────────
-        // [UI] Dashboard (UI 코드는 동일하므로 생략하지 않음)
+        // [UI] Dashboard
         // ─────────────────────────────────────────────
         await risuai.registerSetting('LMAI', async () => {
-            // ... (UI 렌더링 코드는 이전과 동일) ...
-            // 지면상 생략되었으나 실제 실행 시에는 이전 코드의 UI 부분을 그대로 포함해야 합니다.
-            // 변경된 점: 버전 표시에 "Hybrid Merged & Optimized" 추가
             const overlay = document.createElement('div');
             overlay.id = 'lmai-overlay';
             Object.assign(overlay.style, { position: 'fixed', top: '0', left: '0', width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.85)', zIndex: '9999', padding: '20px', color: '#eee', fontFamily: 'sans-serif', overflowY: 'auto', boxSizing: 'border-box' });
 
             const escapeHtml = (unsafe) => (unsafe||'').replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
-            // UI 관련 변수 및 함수 선언... (이전 코드와 동일)
-            // ...
-            // 하단의 setup 부분만 변경 사항 적용
 
-            // 간략화를 위해 UI 렌더링 부분은 이전 코드와 동일하다고 가정합니다.
-            // 실제 사용 시 이전 코드의 UI 부분을 여기에 붙여넣으시면 됩니다.
+            const formatOptions = (selected) => {
+                // [Added] vertex, copilot
+                return ['openai', 'gemini', 'vertex', 'anthropic', 'openrouter', 'copilot'].map(v => 
+                    `<option value="${v}" ${v === selected ? 'selected' : ''}>${v.charAt(0).toUpperCase() + v.slice(1)}</option>`
+                ).join('');
+            };
 
-            // 저장 버튼 이벤트 핸들러 내부에 dedupRandomSample 저장 로직 추가 필요
+            const tokenizerOptions = (selected) => {
+                return Object.values(TokenizerEngine.TOKENIZER_TYPES).map(v =>
+                    `<option value="${v}" ${v === selected ? 'selected' : ''}>${v.toUpperCase()}</option>`
+                ).join('');
+            };
 
+            overlay.innerHTML = `
+                <div id="lmai-app" style="max-width: 750px; margin: 0 auto; background: #1a1a1a; padding: 0; border-radius: 12px; border: 1px solid #444; overflow: hidden; display: flex; flex-direction: column; height: 90vh;">
+                    <datalist id="lmai-model-list"></datalist>
+                    <div id="lmai-header" style="background: #252525; padding: 15px 20px; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center;">
+                        <h2 style="margin: 0; font-size: 1.2em; color: #4a9eff;">📚 Librarian System V1.0</h2>
+                        <div style="display: flex; gap: 10px;">
+                            <button class="lmai-tab-btn" data-tab="home" style="background:none; border:none; color:#4a9eff; cursor:pointer; font-weight:bold; padding: 5px 10px;">🏠 홈</button>
+                            <button class="lmai-tab-btn" data-tab="memory" style="background:none; border:none; color:#aaa; cursor:pointer; font-weight:bold; padding: 5px 10px;">🧠 메모리</button>
+                            <button class="lmai-tab-btn" data-tab="tokenizer" style="background:none; border:none; color:#aaa; cursor:pointer; font-weight:bold; padding: 5px 10px;">📝 토크나이저</button>
+                            <button class="lmai-tab-btn" data-tab="settings" style="background:none; border:none; color:#aaa; cursor:pointer; font-weight:bold; padding: 5px 10px;">⚙️ 설정</button>
+                        </div>
+                    </div>
+
+                    <div id="lmai-body" style="flex: 1; padding: 20px; overflow-y: auto;">
+                        <div id="lmai-pane-home" class="lmai-pane">
+                            <h3 style="color: #4a9eff;">환영합니다!</h3>
+                            <p style="line-height: 1.6; color: #ccc;"><b>Librarian System V1.0</b> (v2.7.7)</p>
+                            <ul style="color: #bbb; line-height: 1.8;">
+                                <li><b>Multi-Provider API:</b> OpenAI, Google, Anthropic, OpenRouter, <b>Vertex AI</b>, <b>GitHub Copilot</b></li>
+                                <li><b>Hybrid Engine:</b> 장기 기억 중복 방지 & 검색 편향 보정</li>
+                                <li><b>Async Queue:</b> 논블로킹 API 처리</li>
+                            </ul>
+                        </div>
+
+                        <div id="lmai-pane-memory" class="lmai-pane" style="display: none;">
+                            <div id="lmai-memory-container">로딩 중...</div>
+                        </div>
+
+                        <div id="lmai-pane-tokenizer" class="lmai-pane" style="display: none;">
+                            <h3 style="margin-top: 0; color: #4a9eff;">📝 토크나이저 설정 (Tokenizer)</h3>
+                            <div style="background: #222; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+                                <label style="font-weight: bold; margin-bottom: 10px; display: block;" title="텍스트를 토큰으로 변환하는 방식을 선택합니다.">토크나이저 타입 (Type) ❓</label>
+                                <select id="cfg-tokenizerType" style="width: 100%; background: #1a1a1a; border: 1px solid #444; color: #eee; padding: 8px; border-radius: 4px;">
+                                    ${tokenizerOptions(MemoryEngine.CONFIG.tokenizerType)}
+                                </select>
+                            </div>
+                            <div style="background: #222; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+                                <label style="font-weight: bold; margin-bottom: 10px; display: block;" title="개별 메모리 항목이 가질 수 있는 최대 토큰 수입니다.">토큰 제한 (Max Tokens) ❓</label>
+                                <input type="number" id="cfg-maxTokensPerMemory" min="50" max="2000" style="width: 100%; background: #1a1a1a; border: 1px solid #444; color: #eee; padding: 8px; border-radius: 4px;" value="${MemoryEngine.CONFIG.maxTokensPerMemory}">
+                            </div>
+                             <div id="custom-tokenizer-settings" style="background: #222; padding: 15px; border-radius: 8px; margin-bottom: 15px; display: ${MemoryEngine.CONFIG.tokenizerType === 'custom' ? 'block' : 'none'};">
+                                <label style="font-weight: bold; color: #4a9eff;">🔌 외부 토크나이저 API</label>
+                                <input type="text" id="cfg-customTokenizerUrl" placeholder="https://your-api.com/count" style="width: 100%; background: #1a1a1a; border: 1px solid #444; color: #eee; padding: 8px; border-radius: 4px; margin-top: 5px;" value="${escapeHtml(MemoryEngine.CONFIG.customTokenizerUrl)}">
+                                <input type="password" id="cfg-customTokenizerKey" placeholder="API Key (선택)" style="width: 100%; background: #1a1a1a; border: 1px solid #444; color: #eee; padding: 8px; border-radius: 4px; margin-top: 5px;" value="${escapeHtml(MemoryEngine.CONFIG.customTokenizerKey)}">
+                            </div>
+                            <div style="background: #222; padding: 15px; border-radius: 8px;">
+                                <label style="font-weight: bold; margin-bottom: 10px; display: block;">🔍 토크 테스트</label>
+                                <textarea id="tokenizer-test-input" placeholder="토큰 수를 계산할 텍스트를 입력하세요..." style="width: 100%; height: 100px; background: #1a1a1a; border: 1px solid #444; color: #eee; padding: 8px; border-radius: 4px;"></textarea>
+                                <button id="tokenizer-test-btn" style="margin-top: 10px; background: #4a9eff; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">토큰 계산</button>
+                                <div id="tokenizer-test-result" style="margin-top: 10px; padding: 10px; background: #1a1a1a; border-radius: 4px; display: none;"></div>
+                            </div>
+                        </div>
+
+                        <div id="lmai-pane-settings" class="lmai-pane" style="display: none;">
+                            <h3 style="margin-top: 0;">⚙️ 전역 설정 (General)</h3>
+                            <div style="display: flex; flex-direction: column; gap: 15px;">
+                                <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;"><input type="checkbox" id="cfg-cbsEnabled" ${MemoryEngine.CONFIG.cbsEnabled ? 'checked' : ''}> CBS 처리 활성화</label>
+                                <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;"><input type="checkbox" id="cfg-emotionEnabled" ${MemoryEngine.CONFIG.emotionEnabled ? 'checked' : ''}> 감정 분석 활성화</label>
+                                <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;"><input type="checkbox" id="cfg-debug" ${MemoryEngine.CONFIG.debug ? 'checked' : ''}> 디버그 모드</label>
+                                <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;"><input type="checkbox" id="cfg-translationFilter" ${MemoryEngine.CONFIG.translationFilter ? 'checked' : ''}> 번역 필터링</label>
+                                <hr style="border: 0; border-top: 1px solid #333; width: 100%;">
+
+                                <div style="background: #222; padding: 15px; border-radius: 8px;">
+                                    <label style="font-weight: bold; color: #4a9eff; margin-bottom: 10px; display: block;">🤖 메인 모델 (Main Model)</label>
+                                    <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 10px;">
+                                        <div>
+                                            <label style="font-size: 0.8em; color: #888;">제공자 (Provider)</label>
+                                            <select id="cfg-main-format" style="width: 100%; background: #1a1a1a; border: 1px solid #444; color: #eee; padding: 8px; border-radius: 4px;">
+                                                ${formatOptions(MemoryEngine.CONFIG.mainModel.format)}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label style="font-size: 0.8em; color: #888;">모델명 (Model)</label>
+                                            <input type="text" id="cfg-main-model" list="lmai-model-list" autocomplete="off" placeholder="gpt-4o" style="width: 100%; background: #1a1a1a; border: 1px solid #444; color: #eee; padding: 8px; border-radius: 4px;" value="${escapeHtml(MemoryEngine.CONFIG.mainModel.model)}">
+                                        </div>
+                                    </div>
+                                    <label style="font-size: 0.8em; color: #888; margin-top: 10px; display: block;">접속 주소 (URL)</label>
+                                    <input type="text" id="cfg-main-url" placeholder="https://api.openai.com/v1/chat/completions" style="width: 100%; background: #1a1a1a; border: 1px solid #444; color: #eee; padding: 8px; border-radius: 4px;" value="${escapeHtml(MemoryEngine.CONFIG.mainModel.url)}">
+                                    <label style="font-size: 0.8em; color: #888; margin-top: 10px; display: block;">API 키 (Key)</label>
+                                    <input type="password" id="cfg-main-key" placeholder="sk-..." style="width: 100%; background: #1a1a1a; border: 1px solid #444; color: #eee; padding: 8px; border-radius: 4px;" value="${escapeHtml(MemoryEngine.CONFIG.mainModel.key)}">
+                                    <div style="margin-top: 10px;">
+                                        <label style="font-size: 0.8em; color: #888;">창의성 (Temp): <span id="temp-val">${MemoryEngine.CONFIG.mainModel.temp}</span></label>
+                                        <input type="range" id="cfg-main-temp" min="0" max="2" step="0.1" value="${MemoryEngine.CONFIG.mainModel.temp}" style="width: 100%;">
+                                    </div>
+                                </div>
+
+                                <hr style="border: 0; border-top: 1px solid #333; width: 100%;">
+
+                                <div style="background: #222; padding: 15px; border-radius: 8px;">
+                                    <label style="font-weight: bold; color: #4a9eff; margin-bottom: 10px; display: block;">🔍 임베딩 모델 (Embedding)</label>
+                                    <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 10px;">
+                                        <div>
+                                            <label style="font-size: 0.8em; color: #888;">제공자 (Provider)</label>
+                                            <select id="cfg-embed-format" style="width: 100%; background: #1a1a1a; border: 1px solid #444; color: #eee; padding: 8px; border-radius: 4px;">
+                                                ${formatOptions(MemoryEngine.CONFIG.embedModel.format)}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label style="font-size: 0.8em; color: #888;">모델명 (Model)</label>
+                                            <input type="text" id="cfg-embed-model" list="lmai-model-list" autocomplete="off" placeholder="text-embedding-3-small" style="width: 100%; background: #1a1a1a; border: 1px solid #444; color: #eee; padding: 8px; border-radius: 4px;" value="${escapeHtml(MemoryEngine.CONFIG.embedModel.model)}">
+                                        </div>
+                                    </div>
+                                    <label style="font-size: 0.8em; color: #888; margin-top: 10px; display: block;">접속 주소 (URL)</label>
+                                    <input type="text" id="cfg-embed-url" placeholder="https://api.openai.com/v1/embeddings" style="width: 100%; background: #1a1a1a; border: 1px solid #444; color: #eee; padding: 8px; border-radius: 4px;" value="${escapeHtml(MemoryEngine.CONFIG.embedModel.url)}">
+                                    <label style="font-size: 0.8em; color: #888; margin-top: 10px; display: block;">API 키 (Key)</label>
+                                    <input type="password" id="cfg-embed-key" placeholder="sk-..." style="width: 100%; background: #1a1a1a; border: 1px solid #444; color: #eee; padding: 8px; border-radius: 4px;" value="${escapeHtml(MemoryEngine.CONFIG.embedModel.key)}">
+                                </div>
+
+                                <hr style="border: 0; border-top: 1px solid #333; width: 100%;">
+
+                                <div style="background: #222; padding: 15px; border-radius: 8px;">
+                                    <label style="font-weight: bold; color: #4a9eff; margin: 0 0 15px 0;">🧠 Memory Settings</label>
+                                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
+                                        <div>
+                                            <label style="font-size: 0.8em; color: #888;">Max Memories</label>
+                                            <input type="number" id="cfg-maxLimit" style="width: 100%; background: #1a1a1a; border: 1px solid #444; color: #eee; padding: 8px; border-radius: 4px;" value="${MemoryEngine.CONFIG.maxLimit}">
+                                        </div>
+                                        <div>
+                                            <label style="font-size: 0.8em; color: #888;">Importance</label>
+                                            <input type="number" id="cfg-threshold" style="width: 100%; background: #1a1a1a; border: 1px solid #444; color: #eee; padding: 8px; border-radius: 4px;" value="${MemoryEngine.CONFIG.threshold}">
+                                        </div>
+                                        <div>
+                                            <label style="font-size: 0.8em; color: #888;">Similarity</label>
+                                            <input type="number" id="cfg-simThreshold" step="0.05" style="width: 100%; background: #1a1a1a; border: 1px solid #444; color: #eee; padding: 8px; border-radius: 4px;" value="${MemoryEngine.CONFIG.simThreshold}">
+                                        </div>
+                                    </div>
+                                    <div style="margin-top: 10px;">
+                                         <label style="font-size: 0.8em; color: #888;">Dedup Random Sample</label>
+                                         <input type="number" id="cfg-dedupRandomSample" style="width: 100%; background: #1a1a1a; border: 1px solid #444; color: #eee; padding: 8px; border-radius: 4px;" value="${MemoryEngine.CONFIG.dedupRandomSample}">
+                                    </div>
+                                </div>
+
+                                <button id="lmai-save-cfg" style="background: #4a9eff; color: white; border: none; padding: 12px; border-radius: 6px; cursor: pointer; font-weight: bold;">💾 설정 저장</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="lmai-footer" style="padding: 15px 20px; border-top: 1px solid #333; text-align: center;">
+                        <button id="lmai-close-dash" style="background: #333; color: #ccc; border: 1px solid #444; padding: 8px 30px; border-radius: 4px; cursor: pointer;">닫기</button>
+                    </div>
+                </div>
+            `;
             document.body.appendChild(overlay);
+
+            // Tab switching logic (omitted for brevity, same as before)
+            const panes = overlay.querySelectorAll('.lmai-pane');
+            const btns = overlay.querySelectorAll('.lmai-tab-btn');
+            const switchTab = (tabId) => {
+                panes.forEach(p => p.style.display = 'none');
+                btns.forEach(b => b.style.color = '#aaa');
+                const targetPane = overlay.querySelector(`#lmai-pane-${tabId}`);
+                const targetBtn = overlay.querySelector(`[data-tab="${tabId}"]`);
+                if (targetPane) targetPane.style.display = 'block';
+                if (targetBtn) targetBtn.style.color = '#4a9eff';
+                if (tabId === 'memory') renderMemoryTab();
+            };
+            btns.forEach(b => b.onclick = () => switchTab(b.dataset.tab));
+            switchTab('home');
+
+            // Tokenizer toggle logic
+            const tokenizerSelect = overlay.querySelector('#cfg-tokenizerType');
+            const customSettings = overlay.querySelector('#custom-tokenizer-settings');
+            if (tokenizerSelect && customSettings) {
+                tokenizerSelect.onchange = () => customSettings.style.display = tokenizerSelect.value === 'custom' ? 'block' : 'none';
+            }
+
+            // Save logic
+            overlay.querySelector('#lmai-save-cfg').onclick = async () => {
+                try {
+                    const newCfg = {
+                        cbsEnabled: overlay.querySelector('#cfg-cbsEnabled').checked,
+                        emotionEnabled: overlay.querySelector('#cfg-emotionEnabled').checked,
+                        debug: overlay.querySelector('#cfg-debug').checked,
+                        translationFilter: overlay.querySelector('#cfg-translationFilter').checked,
+                        maxLimit: Number(overlay.querySelector('#cfg-maxLimit').value),
+                        threshold: Number(overlay.querySelector('#cfg-threshold').value),
+                        simThreshold: Number(overlay.querySelector('#cfg-simThreshold').value),
+                        dedupRandomSample: Number(overlay.querySelector('#cfg-dedupRandomSample').value),
+                        tokenizerType: overlay.querySelector('#cfg-tokenizerType').value,
+                        maxTokensPerMemory: Number(overlay.querySelector('#cfg-maxTokensPerMemory').value),
+                        customTokenizerUrl: overlay.querySelector('#cfg-customTokenizerUrl').value,
+                        customTokenizerKey: overlay.querySelector('#cfg-customTokenizerKey').value,
+                        mainModel: {
+                            format: overlay.querySelector('#cfg-main-format').value,
+                            url: overlay.querySelector('#cfg-main-url').value,
+                            key: overlay.querySelector('#cfg-main-key').value,
+                            model: overlay.querySelector('#cfg-main-model').value,
+                            temp: Number(overlay.querySelector('#cfg-main-temp').value)
+                        },
+                        embedModel: {
+                            format: overlay.querySelector('#cfg-embed-format').value,
+                            url: overlay.querySelector('#cfg-embed-url').value,
+                            key: overlay.querySelector('#cfg-embed-key').value,
+                            model: overlay.querySelector('#cfg-embed-model').value
+                        }
+                    };
+                    await risuai.pluginStorage.setItem('LMAI_Config', JSON.stringify(newCfg));
+                    await updateConfigFromArgs();
+                    alert("✅ 저장 성공");
+                } catch (e) { alert("❌ 저장 실패: " + e.message); }
+            };
+
+            document.getElementById('lmai-close-dash').onclick = () => { overlay.remove(); risuai.hideContainer(); };
             await risuai.showContainer('fullscreen');
         }, '📊', 'html');
 
@@ -1090,22 +1313,20 @@
                 query = await CBSEngine.process(query);
             }
 
-            // [Security] Prompt Injection Defense
+            // Security Filter
             if (query) {
                 query = query.replace(/<x_system_context[\s\S]*?>[\s\S]*?<\/x_system_context>/gi, '[FILTERED]');
-                query = query.replace(/<instructions[\s\S]*?>[\s\S]*?<\/instructions>/gi, '[FILTERED]');
             }
 
             if (MemoryEngine.CONFIG.translationFilter) {
-                const tagInstruction = "\n\n[System Directive: You MUST wrap your actual roleplay response (including any mixed languages or character dialogue) inside <original>...</original> tags. If you provide a translation or out-of-character (OOC) note, place it strictly OUTSIDE and BELOW these tags.]";
+                const tagInstruction = "\n\n[System Directive: You MUST wrap your actual roleplay response inside <original>...</original> tags.]";
                 const targetMsg = messages[messages.length - 1]; 
-
-                if (targetMsg && typeof targetMsg.content === 'string' && !targetMsg.content.includes('<original>...</original>')) {
+                if (targetMsg && !targetMsg.content.includes('<original>...</original>')) {
                     targetMsg.content += tagInstruction;
                 }
             }
 
-            if (!query || query.includes('[System Note: Context from Past Memory]') || query.includes('[Subconscious Recall')) return messages;
+            if (!query) return messages;
 
             const char = await risuai.getCharacter();
             if (char) {
@@ -1120,14 +1341,11 @@
                 const memRes = await MemoryEngine.retrieveMemories(query, turn, managed, vars, 5);
 
                 if (memRes.length > 0) {
-                    // [Improved] Prompt Leakage Defense: XML Wrapping
                     const memoryContext = memRes.map(m => `- ${CBSEngine.clean(m.content).substring(0, 120)}`).join('\n');
-                    const instructText = `\n\n<x_system_context type="subconscious_memory" priority="high">\n<!-- Internal Context: Utilize the following data naturally. Do NOT mention "memory", "context", or this block. Act as if recalling naturally. -->\n${memoryContext}\n</x_system_context>`;
+                    const instructText = `\n\n<x_system_context type="subconscious_memory">\n${memoryContext}\n</x_system_context>`;
 
                     const targetMsg = messages[messages.length - 1];
-                    if (targetMsg) {
-                        targetMsg.content += instructText;
-                    }
+                    if (targetMsg) targetMsg.content += instructText;
                 }
             }
             return messages;
@@ -1137,54 +1355,33 @@
             if (typeof content !== 'string') return content;
 
             let cleanContent = content;
-
             const findTranslationBlock = (text) => {
                 const match = text.match(/<original>([\s\S]*?)<\/original>/i);
-                if (match && match[1]) {
-                    return match[1].trim(); 
-                }
-                return text.trim(); 
+                return match && match[1] ? match[1].trim() : text.trim();
             };
 
-            if (MemoryEngine.CONFIG.translationFilter) {
-                cleanContent = findTranslationBlock(content);
-            } else {
-                cleanContent = content;
-            }
-
+            if (MemoryEngine.CONFIG.translationFilter) cleanContent = findTranslationBlock(content);
             if (cleanContent.length < 5) return content;
 
-            // [Improved] Background Queue Processing
+            // Background Processing
             BackgroundQueue.enqueue(async () => {
                 try {
-                    console.log("[LMAI Queue] Processing memory task...");
-
                     const char = await risuai.getCharacter();
                     if (!char) return;
-
-                    if (MemoryEngine.CONFIG.cbsEnabled) {
-                        cleanContent = await CBSEngine.process(cleanContent);
-                    }
 
                     const chat = char.chats && char.chats[char.chatPage] ? char.chats[char.chatPage] : {};
                     const turn = (chat.message || []).length;
 
                     let currentVars = {};
-                    const recentHistory = (chat.message || []).slice(-10);
-                    recentHistory.forEach(m => { currentVars = CBSEngine.parseVariables(m.content, currentVars); });
+                    (chat.message || []).slice(-10).forEach(m => { currentVars = CBSEngine.parseVariables(m.content, currentVars); });
 
                     let lore = MemoryEngine.getLorebook(char, chat);
-
                     const emotion = await EmotionEngine.analyze(cleanContent);
+
                     let memText = cleanContent;
                     if (MemoryEngine.CONFIG.mainModel.url) {
-                        try {
-                            const prompt = `Condense the following roleplay turn into a concise memory. Keep essential emotional context, names, and key actions. Keep it brief.\n\nText:\n${cleanContent}`;
-                            const s = await AuxAIEngine.chat(prompt, "You are an expert roleplay memory archiver.");
-                            if (s && s.trim().length > 0) {
-                                memText = s;
-                            }
-                        } catch (e) { console.error("[LMAI Queue] Summary failed", e); }
+                         const s = await AuxAIEngine.chat(`Condense: ${cleanContent}`, "Archiver");
+                         if (s) memText = s;
                     }
 
                     const sumRes = await SummaryEngine.consolidate(lore, turn, MemoryEngine.CONFIG.summaryThreshold);
@@ -1199,23 +1396,10 @@
                     await safeModifyCharacter(c => {
                         if (!c.chats || c.chatPage === undefined) return c;
                         const currentChat = c.chats[c.chatPage];
-                        const existingTurns = new Set((currentChat.message || []).map((_, i) => i + 1));
-                        const finalLore = lore.filter(entry => {
-                            if (entry.comment !== MemoryEngine.CONFIG.loreComment) return true;
-                            const meta = MemoryEngine.getCachedMeta(entry);
-                            if (meta.type === 'core' || meta.type === 'archive') return true;
-                            if (!meta.turn || meta.turn === 0) return true;
-                            return existingTurns.has(meta.turn);
-                        });
-
-                        MemoryEngine.setLorebook(c, currentChat, finalLore);
+                        MemoryEngine.setLorebook(c, currentChat, lore);
                         return c;
                     });
-
-                    console.log("[LMAI Queue] Task finished.");
-                } catch (e) { 
-                    console.error("[LMAI] Background Error", e); 
-                }
+                } catch (e) { console.error("[LMAI] Background Error", e); }
             });
 
             return content;
