@@ -13,9 +13,9 @@
 //@arg cbs_enabled string Enable CBS syntax processing (true/false, Default: true)
 //@arg sim_threshold string Minimum similarity to retrieve (Default: 0.25)
 //@arg weight_mode string Mode (auto/manual/romance/action/mystery/daily, Default: auto)
-//@arg w_sim number Manual Sim Weight (Default: 0.5)
-//@arg w_imp number Manual Imp Weight (Default: 0.3)
-//@arg w_rec number Manual Rec Weight (Default: 0.2)
+//@arg w_sim string Manual Sim Weight (Default: 0.5)
+//@arg w_imp string Manual Imp Weight (Default: 0.3)
+//@arg w_rec string Manual Rec Weight (Default: 0.2)
 
 /**
  * =============================================================================
@@ -24,7 +24,7 @@
  * [v3.6 Patch Notes]
  * 1. Dynamic Weights: 'auto' 모드 시 대화 텍스트(액션, 로맨스 등)를 분석해 가중치 자동 스위칭.
  * 2. Genre Presets: romance, action, mystery, daily 등 장르별 최적 가중치 프리셋 제공.
- * 3. Manual Override: 수동 파라미터 제어 기능 추가.
+ * 3. Manual Override: 수동 파라미터 제어 기능 추가 (RisuAI 호환을 위해 string 인자 사용 후 숫자 변환).
  * 4. Stability (from v3.5): 15s Timeout AbortController, 에러 로깅, Incremental GC 개선.
  * =============================================================================
  */
@@ -554,6 +554,7 @@
             const mode = (getVal('weightMode', 'weight_mode', 'string') || 'auto').toLowerCase();
             cfg.weightMode = mode;
 
+            // RisuAI 지원을 위해 헤더에서는 string으로 받고, 사용할 때는 내부에서 number로 변환
             const manualWeights = {
                 similarity: getVal('w_sim', 'w_sim', 'number') ?? 0.5,
                 importance: getVal('w_imp', 'w_imp', 'number') ?? 0.3,
