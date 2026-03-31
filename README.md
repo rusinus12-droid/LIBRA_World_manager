@@ -259,6 +259,39 @@ provider마다 반영 방식이 다릅니다.
 - 메모리 프리셋: `general`
 - 스토리 작가 모드: `비활성`
 
+## 버전 변경사항
+
+### v2.4.0 -> v2.4.1
+
+Copilot의 GPT-4.1, OpenAI-compatible 계열 모델, 그 외 일부 추론형 LLM이 응답에 내부 사고 태그를 포함할 때, 해당 태그가 메모리/요약/구조화 추출 파이프라인에 섞여 저장되던 문제를 수정했습니다.
+
+대표적으로 아래와 같은 태그를 제거합니다.
+
+- `<thoughts> ... </thoughts>`
+- `<thinking> ... </thinking>`
+- `<__filter_complete__>`
+
+핵심 수정 내용:
+
+- `Utils.stripLLMThinkingTags()` 추가
+- `sanitizeForLibra()`에서 메인 응답 저장 전 사고 태그 제거
+- `extractJson()`에서 JSON 파싱 전 사고 태그 제거
+- `CharacterStateTracker.consolidateIfNeeded()`에서 캐릭터 상태 통합 전 보호
+- `WorldStateTracker.consolidateIfNeeded()`에서 세계 상태 통합 전 보호
+- `EntityAwareProcessor.extractFromConversation()`에서 구조화 추출 전 보호
+
+추가 보완:
+
+- 세션 전환 시 직전 상황 요약(`sceneSummary`) 생성 경로에서도 사고 태그를 제거하도록 보완
+- 태그 제거 후 빈 문자열이 되면 태그가 포함된 원문으로 되돌아가지 않도록 유지
+
+효과:
+
+- 메모리에 내부 사고 태그가 그대로 남는 현상 완화
+- 요약 JSON 파싱 안정성 향상
+- 상태 통합 및 엔티티 추출 정확도 향상
+- 세션 전환 시 다음 방에 불필요한 내부 태그가 전파되는 문제 완화
+
 ### 장기 RP / 서사형 추천
 
 - LLM: `Claude Sonnet` 또는 강한 GPT 계열
