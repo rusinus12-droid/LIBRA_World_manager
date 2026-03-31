@@ -2,7 +2,7 @@
 //@display-name LIBRA World Manager
 //@author rusinus12@gmail.com
 //@api 3.0
-//@version 2.4.0
+//@version 2.4.1
 
 (async () => {
     // ══════════════════════════════════════════════════════════════
