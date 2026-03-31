@@ -197,13 +197,30 @@
             setTimeout(() => { window.alert(msg); res(); }, 0);
         }),
         sleep: (ms) => new Promise(res => setTimeout(res, ms)),
+
+        /**
+         * LLM 사고/필터 태그 제거 (프로바이더 공통)
+         * <thoughts>, <thinking>, <__filter_complete__> 등 LLM 내부 추론 태그를 제거
+         */
+        stripLLMThinkingTags: (text) => {
+            if (!text) return text;
+            let clean = String(text);
+            clean = clean.replace(/<thoughts>[\s\S]*?<\/thoughts>/gi, '');
+            clean = clean.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '');
+            clean = clean.replace(/<__filter_complete__>[\s\S]*?<\/__filter_complete__>/gi, '');
+            clean = clean.replace(/<__filter_complete__\s*\/?>/gi, '');
+            // 닫히지 않은 사고 태그 제거 (LLM 출력이 잘린 경우)
+            clean = clean.replace(/<thoughts>[\s\S]*$/gi, '');
+            clean = clean.replace(/<thinking>[\s\S]*$/gi, '');
+            return clean;
+        },
         
         sanitizeForLibra: (text) => {
             if (!text) return text;
+            let clean = Utils.stripLLMThinkingTags(text);
+
             const cfg = MemoryEngine.CONFIG;
-            if (!cfg.enableGigaTrans && !cfg.enableLightboard) return text;
-            
-            let clean = String(text);
+            if (!cfg.enableGigaTrans && !cfg.enableLightboard) return clean.trim();
             
             // 1. GigaTrans 제거
             if (cfg.enableGigaTrans) {
@@ -318,12 +335,14 @@
 
         const extractJson = (text) => {
             if (!text || typeof text !== 'string') return null;
+            // LLM 사고/필터 태그 제거
+            const cleaned = Utils.stripLLMThinkingTags(text).trim();
             try {
                 // 1차: 직접 파싱 시도
-                return JSON.parse(text.trim());
+                return JSON.parse(cleaned);
             } catch { /* fallback */ }
             // 2차: 코드블록 내 JSON 추출
-            const codeBlock = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+            const codeBlock = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
             if (codeBlock) {
                 try {
                     const inner = codeBlock[1].trim().match(/\{[\s\S]*\}/);
@@ -332,7 +351,7 @@
             }
             // 3차: 일반 JSON 추출
             try {
-                const match = text.match(/\{[\s\S]*\}/);
+                const match = cleaned.match(/\{[\s\S]*\}/);
                 return match ? JSON.parse(match[0]) : null;
             } catch { return null; }
         };
@@ -858,7 +877,7 @@
                         LMAI_GUI.toast("직전 상황 요약 중...");
                         const contextText = lastMsgs.map(m => `${(m.role === 'user' || m.is_user) ? 'User' : 'AI'}: ${m.text || m.msg || m.mes || m.data}`).join('\n\n');
                         const result = await LLMProvider.call(MemoryEngine.CONFIG, TransitionSummaryPrompt, contextText, { maxTokens: 800 });
-                        if (result.content) sceneSummary = result.content.trim();
+                        if (result.content) sceneSummary = Utils.stripLLMThinkingTags(result.content).trim();
                     }
                 } catch (summaryError) {
                     console.warn("[LIBRA] Transition Summary generation failed, but continuing transition:", summaryError);
@@ -3242,7 +3261,8 @@
                     , `char-state-${entityName}`);
 
                     if (result.content) {
-                        const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+                        const cleanedContent = Utils.stripLLMThinkingTags(result.content);
+                        const jsonMatch = cleanedContent.match(/\{[\s\S]*\}/);
                         if (jsonMatch) {
                             const parsed = JSON.parse(jsonMatch[0]);
                             history.consolidated.push({
@@ -3388,7 +3408,8 @@
                     , `world-state-${currentTurn}`);
 
                     if (result.content) {
-                        const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+                        const cleanedContent = Utils.stripLLMThinkingTags(result.content);
+                        const jsonMatch = cleanedContent.match(/\{[\s\S]*\}/);
                         if (jsonMatch) {
                             const parsed = JSON.parse(jsonMatch[0]);
                             stateHistory.consolidated.push({
@@ -4361,7 +4382,7 @@ Extract the following information from the conversation and output in JSON forma
 
             try {
                 const result = await LLMProvider.call(config, systemInstruction, userContent, { maxTokens: 1500 });
-                const content = result.content || '';
+                const content = Utils.stripLLMThinkingTags(result.content || '');
                 const jsonMatch = content.match(/\{[\s\S]*\}/);
                 if (!jsonMatch) throw new Error('No JSON found');
                 const parsed = JSON.parse(jsonMatch[0]);
