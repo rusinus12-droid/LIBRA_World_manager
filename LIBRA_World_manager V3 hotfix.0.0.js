@@ -7367,7 +7367,7 @@ Extract the following information from the conversation and output in JSON forma
 
             for (const entityData of entities || []) {
                 if (!entityData.name) continue;
-                const consistency = EntityManager.checkConsistency(entityData.name, entityData, lore);
+                const consistency = EntityManager.checkConsistency(entityData.name, entityData, lorebook);
                 if (!consistency.consistent && config.debug) {
                     console.warn(`[LIBRA] Entity consistency warning:`, consistency.conflicts);
                 }
