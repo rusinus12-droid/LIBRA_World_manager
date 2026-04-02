@@ -203,6 +203,13 @@
             return false;
         }
     };
+    const isIllustrationModuleCompatEnabled = () => {
+        try {
+            return typeof MemoryEngine !== 'undefined' && !!MemoryEngine.CONFIG?.illustrationModuleCompatEnabled;
+        } catch {
+            return false;
+        }
+    };
     function resolveColdStartHistoryLimit(preset, fallbackLimit = 100) {
         return 0;
     }
@@ -1171,8 +1178,10 @@
             clean = clean.replace(/<GigaTrans>[\s\S]*?<\/GigaTrans>/gi, '');
             clean = stripLBDATA(clean);
             clean = clean.replace(/\[Lightboard Platform Managed\]/gi, '');
-            clean = clean.replace(/<lb-[\w-]+(?:\s[^>]*)?>[\s\S]*?<\/lb-[\w-]+>/gi, '');
-            clean = clean.replace(/<lb-[\w-]+(?:\s[^>]*)?\/>/gi, '');
+            if (!isIllustrationModuleCompatEnabled()) {
+                clean = clean.replace(/<lb-[\w-]+(?:\s[^>]*)?>[\s\S]*?<\/lb-[\w-]+>/gi, '');
+                clean = clean.replace(/<lb-[\w-]+(?:\s[^>]*)?\/>/gi, '');
+            }
             return clean;
         },
         
@@ -8145,6 +8154,7 @@ entities의 personality에는 일반 성격 특성만 기술하십시오.
             useLLM: true,
             cbsEnabled: true,
             emotionEnabled: true,
+            illustrationModuleCompatEnabled: false,
             preventUserIgnoreEnabled: false,
             storyAuthorEnabled: true,
             storyAuthorMode: 'proactive',
@@ -10625,6 +10635,7 @@ const updateConfigFromArgs = async () => {
     cfg.cbsEnabled = getVal('cbsEnabled', 'cbs_enabled', 'boolean', null, true);
     cfg.useLorebookRAG = getVal('useLorebookRAG', 'use_lorebook_rag', 'boolean', null, true);
     cfg.emotionEnabled = getVal('emotionEnabled', 'emotion_enabled', 'boolean', null, true);
+    cfg.illustrationModuleCompatEnabled = getVal('illustrationModuleCompatEnabled', 'illustration_module_compat_enabled', 'boolean', null, false);
     cfg.preventUserIgnoreEnabled = getVal('preventUserIgnoreEnabled', 'prevent_user_ignore_enabled', 'boolean', null, false);
     cfg.storyAuthorEnabled = getVal('storyAuthorEnabled', 'story_author_enabled', 'boolean', null, true);
     cfg.gcBatchSize = getVal('gcBatchSize', 'gc_batch_size', 'number', null, MEMORY_PRESETS.general.gcBatchSize);
@@ -11032,6 +11043,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
         <div class="tr"><label>CBS 엔진 사용</label><label class="tog"><input type="checkbox" id="scbs" title="매크로 및 조건부 텍스트({{...}})를 처리합니다."><span class="tsl"></span></label></div>
         <div class="tr"><label>로어북 동적 참조 (RAG)</label><label class="tog"><input type="checkbox" id="slrag" title="일반 로어북의 설정도 검색하여 AI에게 전달합니다."><span class="tsl"></span></label></div>
         <div class="tr"><label>감정 분석 사용</label><label class="tog"><input type="checkbox" id="semo" title="감정 분석 엔진을 활성화합니다."><span class="tsl"></span></label></div>
+        <div class="tr"><label>라이트보드 삽화 태그 호환</label><label class="tog"><input type="checkbox" id="silc" title="활성화 시 <lb-xnai> 같은 라이트보드 삽화 태그를 LIBRA 정제 단계에서 제거하지 않고 그대로 유지합니다."><span class="tsl"></span></label></div>
         <div class="tr"><label>유저 무시 금지</label><label class="tog"><input type="checkbox" id="sugi" title="활성화 시 현재 유저 인풋을 최상위 응답 축으로 두고, 다른 인젝션 요소가 그 인풋을 보완하도록 조정합니다."><span class="tsl"></span></label></div>
         <div class="tr"><label>디버그 모드</label><label class="tog"><input type="checkbox" id="sdb"><span class="tsl"></span></label></div>
       </div>
@@ -12123,6 +12135,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
                 cbsEnabled: overlay.querySelector("#scbs").checked,
                 useLorebookRAG: overlay.querySelector("#slrag").checked,
                 emotionEnabled: overlay.querySelector("#semo").checked,
+                illustrationModuleCompatEnabled: overlay.querySelector("#silc").checked,
                 preventUserIgnoreEnabled: overlay.querySelector("#sugi").checked,
                 storyAuthorEnabled: storyAuthorMode !== 'disabled',
                 directorEnabled: directorMode !== 'disabled',
@@ -12189,6 +12202,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
                 }
             };
             if (merged.sectionWorldInferenceEnabled === undefined) merged.sectionWorldInferenceEnabled = true;
+            if (merged.illustrationModuleCompatEnabled === undefined) merged.illustrationModuleCompatEnabled = false;
             if (merged.preventUserIgnoreEnabled === undefined) merged.preventUserIgnoreEnabled = false;
             return merged;
         };
@@ -12220,6 +12234,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
             overlay.querySelector("#scbs").checked = c.cbsEnabled !== false;
             overlay.querySelector("#slrag").checked = c.useLorebookRAG !== false;
             overlay.querySelector("#semo").checked = c.emotionEnabled !== false;
+            overlay.querySelector("#silc").checked = !!c.illustrationModuleCompatEnabled;
             overlay.querySelector("#sugi").checked = !!c.preventUserIgnoreEnabled;
             overlay.querySelector("#sep").value = (c.embed && c.embed.provider) || "openai";
             overlay.querySelector("#seu").value = (c.embed && c.embed.url) || "";
@@ -12538,7 +12553,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
 
         overlay.querySelector('#btn-reset-settings').onclick = () => {
             if (!confirm("모든 설정을 초기값으로 되돌리시겠습니까?")) return;
-            _CFG = { useLLM: true, cbsEnabled: true, useLorebookRAG: true, emotionEnabled: true, preventUserIgnoreEnabled: false, storyAuthorEnabled: true, storyAuthorMode: "proactive", directorEnabled: true, directorMode: "strong", sectionWorldInferenceEnabled: true, debug: false, memoryPreset: "general", maxLimit: MEMORY_PRESETS.general.maxLimit, threshold: MEMORY_PRESETS.general.threshold, simThreshold: MEMORY_PRESETS.general.simThreshold, gcBatchSize: MEMORY_PRESETS.general.gcBatchSize, coldStartScopePreset: "all", coldStartHistoryLimit: 0, weightMode: "auto", worldAdjustmentMode: "dynamic", llm: { provider: "openai", url: "", key: "", model: "gpt-4o-mini", temp: 0.3, timeout: 120000, reasoningEffort: "none", reasoningBudgetTokens: 0 }, auxLlm: { enabled: false, provider: "openai", url: "", key: "", model: "gpt-4o-mini", temp: 0.2, timeout: 90000, reasoningEffort: "none", reasoningBudgetTokens: 0 }, embed: { provider: "openai", url: "", key: "", model: "text-embedding-3-small", timeout: 120000 } };
+            _CFG = { useLLM: true, cbsEnabled: true, useLorebookRAG: true, emotionEnabled: true, illustrationModuleCompatEnabled: false, preventUserIgnoreEnabled: false, storyAuthorEnabled: true, storyAuthorMode: "proactive", directorEnabled: true, directorMode: "strong", sectionWorldInferenceEnabled: true, debug: false, memoryPreset: "general", maxLimit: MEMORY_PRESETS.general.maxLimit, threshold: MEMORY_PRESETS.general.threshold, simThreshold: MEMORY_PRESETS.general.simThreshold, gcBatchSize: MEMORY_PRESETS.general.gcBatchSize, coldStartScopePreset: "all", coldStartHistoryLimit: 0, weightMode: "auto", worldAdjustmentMode: "dynamic", llm: { provider: "openai", url: "", key: "", model: "gpt-4o-mini", temp: 0.3, timeout: 120000, reasoningEffort: "none", reasoningBudgetTokens: 0 }, auxLlm: { enabled: false, provider: "openai", url: "", key: "", model: "gpt-4o-mini", temp: 0.2, timeout: 90000, reasoningEffort: "none", reasoningBudgetTokens: 0 }, embed: { provider: "openai", url: "", key: "", model: "text-embedding-3-small", timeout: 120000 } };
             loadSettings(); toast("🔄 설정 초기화됨");
         };
 
