@@ -3239,12 +3239,21 @@ entities의 personality에는 일반 성격 특성만 기술하십시오.
             }
         };
 
-        const integrateImportedKnowledge = async (rawTexts, sourceLabel = 'Hypa V3') => {
+        const integrateImportedKnowledge = async (rawTexts, sourceLabel = 'Hypa V3', options = {}) => {
             if (!MemoryEngine.CONFIG.useLLM) {
                 throw new Error("LLM 사용이 꺼져 있어 구조화 분석을 진행할 수 없습니다.");
             }
+            const opts = {
+                sourceId: 'hypa_v3',
+                updateNarrative: true,
+                worldNote: `Updated via ${sourceLabel} Import`,
+                ...options
+            };
             const synthesizedData = await synthesizeStructuredKnowledge(rawTexts, `import-${String(sourceLabel || 'knowledge').toLowerCase().replace(/[^a-z0-9_-]+/g, '-')}`);
-            const currentData = buildCurrentStructuredSnapshot([]);
+            const char = await requireLoadedCharacter();
+            const chat = char?.chats?.[char?.chatPage];
+            const lore = MemoryEngine.getLorebook(char, chat);
+            const currentData = buildCurrentStructuredSnapshot(lore);
             const finalData = await verifyMergedStructuredKnowledge(
                 currentData,
                 synthesizedData,
@@ -3254,9 +3263,9 @@ entities의 personality에는 일반 성격 특성만 기술하십시오.
                 throw new Error("가져온 지식 데이터를 구조화하지 못했습니다.");
             }
             await mergeStructuredKnowledge(finalData, {
-                updateNarrative: true,
-                worldNote: `Updated via ${sourceLabel} Import`,
-                sourceId: 'hypa_v3'
+                updateNarrative: opts.updateNarrative,
+                worldNote: opts.worldNote,
+                sourceId: opts.sourceId
             });
             return finalData;
         };
@@ -11371,7 +11380,15 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
                     status: 'manual-lorebook',
                     activeTask: 'LIBRA 데이터 병합'
                 });
-                await ColdStartManager.integrateImportedKnowledge([payload.text], `User Lorebook #${entry.key.replace('lmai_user_', '')}`);
+                await ColdStartManager.integrateImportedKnowledge(
+                    [payload.text],
+                    `User Lorebook #${entry.key.replace('lmai_user_', '')}`,
+                    {
+                        sourceId: 'user_lorebook',
+                        updateNarrative: true,
+                        worldNote: `Updated via User Lorebook #${entry.key.replace('lmai_user_', '')}`
+                    }
+                );
 
                 lore = MemoryEngine.getLorebook(char, activeChat) || lore;
                 syncGuiSnapshotsFromRuntime();
