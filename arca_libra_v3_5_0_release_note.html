@@ -44,6 +44,7 @@
         <li>메모리 재분석이 추가되어 누락된 기억을 다시 스캔하고, 후검증을 거쳐 보충 저장할 수 있습니다.</li>
         <li>메모리 재분석 중 새로 채택된 후보끼리도 중복 비교가 들어가도록 보강되어, 인접 턴 유사 기억 중복이 줄었습니다.</li>
         <li>메모리 검색의 auto 가중치가 웹소설/장르문학 톤을 더 잘 반영하도록 확장되었습니다.</li>
+        <li>메모리 탭 저장도 이제 다른 LIBRA 구조 상태를 떨어뜨리지 않도록 전체 관리 스냅샷 기준으로 저장됩니다.</li>
       </ul>
     </section>
 
@@ -65,6 +66,7 @@
         <li><strong>장면용 세계관 보정</strong>이 추가되어, 현재 장면에서 어떤 세계관 요소를 우선 해석해야 하는지 보조 프롬프트로 반영합니다.</li>
         <li>세계관 재분석은 이제 전역 특성까지 normal turn 처리에 가깝게 복원합니다.</li>
         <li>웹소설 계열 장르 키워드와 퓨전 장르 판정이 강화되어 현대/판타지/헌터/아카데미/선협/사이버펑크 쪽 해석 폭이 넓어졌습니다.</li>
+        <li>세계관 재분석 후 로컬 GUI 스냅샷도 즉시 다시 읽어와, 저장 직후 후속 편집 시 어긋남이 줄었습니다.</li>
       </ul>
     </section>
 
@@ -90,6 +92,7 @@
       <h2 style="margin:0 0 10px;font-size:24px;color:#fff;letter-spacing:-0.02em;">6. 세션 전환과 상태 복구 강화</h2>
       <ul style="margin:0;padding-left:20px;color:#d9e2f0;">
         <li><strong>대화 이어가기</strong>가 구조 데이터, 메모리뿐 아니라 수동 로어북, Hypa 원본 소스, 채팅 노트까지 더 잘 계승합니다.</li>
+        <li>이제 <strong>Director 상태</strong>도 함께 계승되어, 이어가기 직후 감독 개입이 갑자기 약해지는 문제가 줄었습니다.</li>
         <li>그리팅 격리 로직도 세션 전환 후 새 채팅 기준으로 다시 맞춰져, 첫 assistant-only 인사 격리 흐름이 더 안정적입니다.</li>
         <li>페이지 새로고침이나 저장 타이밍 어긋남에 대비해 checkpoint / recovery / pending stabilization 흐름이 계속 보강되었습니다.</li>
       </ul>
@@ -101,6 +104,7 @@
         <li>작업 진행 상황을 보여주는 <strong>대시보드</strong>가 추가되어, 토큰/호출/진행률/백그라운드 작업 상태를 시각적으로 확인할 수 있습니다.</li>
         <li>과거 대화 분석 / 재분석, 하이파, 수동 로어북, 메모리 / 엔티티 / 세계관 / 내러티브 재분석도 내부 단계별 퍼센트가 더 자연스럽게 오르도록 보강되었습니다.</li>
         <li>설정은 이제 파일 기반 export/import 방식으로 관리됩니다.</li>
+        <li><strong>캐시 초기화</strong> 버튼으로 런타임 캐시를 비우고, 현재 로어북을 다시 읽어와 즉시 재동기화할 수 있습니다.</li>
         <li>모바일 대응, 다크 모드 대응, 중앙 정렬, 카드형 정보 표시 등 GUI 사용성이 개선되었습니다.</li>
       </ul>
     </section>
@@ -110,8 +114,18 @@
       <ul style="margin:0;padding-left:20px;color:#d9e2f0;">
         <li><strong>유저 무시 금지</strong> 옵션이 추가되어, 켜면 현재 유저 입력을 최우선 응답 축으로 둡니다.</li>
         <li><strong>라이트보드 삽화 태그 호환</strong> 옵션이 추가되어, 삽화 모듈의 `&lt;lb-xnai&gt;...&lt;/lb-xnai&gt;` 태그를 보존할 수 있습니다.</li>
+        <li>LightBoard/XNAI 제어 턴은 최근 제어 메시지 기준으로만 감지해 과잉 차단을 줄였고, 일반 서사 응답에 삽화 태그가 포함된 경우에는 LIBRA 후처리를 계속 수행합니다.</li>
         <li><strong>NSFW 지침 전달</strong> 옵션이 추가되어, 켰을 때만 Director / Story Author에 NSFW guidance가 전달됩니다.</li>
-        <li>NSFW가 꺼져 있으면 이 추가 문구들은 전달되지 않고, 기존 Director / Story Author 설계 그대로 동작합니다.</li>
+        <li>NSFW가 꺼져 있으면 novel writing guidance / prefill까지 포함한 추가 문구가 전달되지 않고, 기존 Director / Story Author 설계 그대로 동작합니다.</li>
+      </ul>
+    </section>
+
+    <section style="padding:20px;border-radius:22px;background:#1a2130;border:1px solid #2b3549;">
+      <h2 style="margin:0 0 10px;font-size:24px;color:#fff;letter-spacing:-0.02em;">9. 저장 안정성과 공존성</h2>
+      <ul style="margin:0;padding-left:20px;color:#d9e2f0;">
+        <li>LIBRA는 저장 시 <strong>`lmai_`가 아닌 외부 로어북 항목을 보존</strong>하도록 정리되어, 다른 플러그인/사용자 로어를 통째로 지우는 위험을 크게 줄였습니다.</li>
+        <li>GUI의 부분 저장도 현재 채팅의 다른 LIBRA 상태를 보존한 전체 관리 스냅샷으로 저장되도록 보강되었습니다.</li>
+        <li>LightBoard가 잠깐 active 상태일 때는 저장을 짧게 지연시켜 충돌을 줄이되, 장시간 pending 때문에 저장이 수 분씩 멈추는 상태는 피하도록 grace period 후 저장을 진행합니다.</li>
       </ul>
     </section>
   </div>
