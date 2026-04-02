@@ -203,6 +203,13 @@
             return false;
         }
     };
+    const isIllustrationModuleCompatEnabled = () => {
+        try {
+            return typeof MemoryEngine !== 'undefined' && !!MemoryEngine.CONFIG?.illustrationModuleCompatEnabled;
+        } catch {
+            return false;
+        }
+    };
     function resolveColdStartHistoryLimit(preset, fallbackLimit = 100) {
         return 0;
     }
@@ -309,6 +316,14 @@
             return { mode: 'button', rect: button.getBoundingClientRect() };
         }
         return { mode: 'viewport', rect: null };
+    };
+    const getDashboardHost = () => {
+        if (typeof document === 'undefined') return null;
+        const guiOverlay = document.getElementById('lmai-overlay');
+        if (guiOverlay instanceof HTMLElement) {
+            return { mode: 'gui', host: guiOverlay };
+        }
+        return { mode: 'body', host: document.body };
     };
     const persistLoreToActiveChat = async (preferredChat, lore, opts = {}) => {
         if (!Array.isArray(lore)) return { ok: false, reason: 'invalid_lore' };
@@ -567,12 +582,19 @@
         const ensureOverlay = () => {
             if (typeof document === 'undefined') return null;
         let root = document.getElementById(OVERLAY_ID);
-        if (root) return root;
+        const hostInfo = getDashboardHost();
+        if (root) {
+            if (hostInfo?.host && root.parentNode !== hostInfo.host) {
+                hostInfo.host.appendChild(root);
+            }
+            return root;
+        }
         root = document.createElement('div');
         root.id = OVERLAY_ID;
         root.innerHTML = `
 <style>
 #${OVERLAY_ID}{position:fixed;left:18px;top:18px;z-index:10001;pointer-events:none;font-family:var(--risu-font-family,'Segoe UI',system-ui,sans-serif)}
+#lmai-overlay > #${OVERLAY_ID}{position:absolute;z-index:10002}
 #${OVERLAY_ID} .libra-activity-card{width:min(360px,calc(100vw - 24px));background:color-mix(in srgb,var(--risu-theme-darkbg,#141820) 88%, transparent);border:1px solid color-mix(in srgb,var(--risu-theme-borderc,#6272a4) 46%, transparent);border-radius:18px;box-shadow:0 20px 50px rgba(0,0,0,.35);padding:14px 14px 12px;color:var(--risu-theme-textcolor,#eef4ff);backdrop-filter:blur(12px);pointer-events:auto;transform-origin:calc(100% - 56px) 18px;animation:libra-dashboard-expand .26s cubic-bezier(.2,.8,.2,1)}
 #${OVERLAY_ID} .libra-activity-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:12px}
 #${OVERLAY_ID} .libra-activity-title{font-size:13px;font-weight:700;letter-spacing:.02em}
@@ -614,12 +636,14 @@
 }
 </style>
 <div class="libra-activity-card"></div>`;
-            document.body.appendChild(root);
+            (hostInfo?.host || document.body).appendChild(root);
             const anchorInfo = getDashboardAnchorInfo();
             if (anchorInfo.mode === 'gui' && anchorInfo.rect) {
                 const rect = anchorInfo.rect;
-                root.style.left = `${Math.max(12, Math.round(rect.left + ((rect.width || 0) / 2)))}px`;
-                root.style.top = `${Math.max(12, Math.round(rect.top + ((rect.height || 0) / 2)))}px`;
+                const centerX = Math.round((rect.width || 0) / 2);
+                const centerY = Math.round((rect.height || 0) / 2);
+                root.style.left = `${Math.max(12, centerX)}px`;
+                root.style.top = `${Math.max(12, centerY)}px`;
                 root.style.right = 'auto';
                 root.style.bottom = 'auto';
                 root.style.transform = 'translate(-50%, -50%)';
@@ -670,12 +694,18 @@
             const root = ensureOverlay();
             syncLibraLauncherActivityState();
             if (root) {
+                const hostInfo = getDashboardHost();
+                if (hostInfo?.host && root.parentNode !== hostInfo.host) {
+                    hostInfo.host.appendChild(root);
+                }
                 const anchorInfo = getDashboardAnchorInfo();
                 const compact = typeof window !== 'undefined' && Math.min(window.innerWidth || 9999, window.innerHeight || 9999) <= 640;
                 if (anchorInfo.mode === 'gui' && anchorInfo.rect) {
                     const rect = anchorInfo.rect;
-                    root.style.left = `${Math.max(12, Math.round(rect.left + ((rect.width || 0) / 2)))}px`;
-                    root.style.top = `${Math.max(12, Math.round(rect.top + ((rect.height || 0) / 2)))}px`;
+                    const centerX = Math.round((rect.width || 0) / 2);
+                    const centerY = Math.round((rect.height || 0) / 2);
+                    root.style.left = `${Math.max(12, centerX)}px`;
+                    root.style.top = `${Math.max(12, centerY)}px`;
                     root.style.right = 'auto';
                     root.style.bottom = 'auto';
                     root.style.transform = 'translate(-50%, -50%)';
@@ -1148,8 +1178,10 @@
             clean = clean.replace(/<GigaTrans>[\s\S]*?<\/GigaTrans>/gi, '');
             clean = stripLBDATA(clean);
             clean = clean.replace(/\[Lightboard Platform Managed\]/gi, '');
-            clean = clean.replace(/<lb-[\w-]+(?:\s[^>]*)?>[\s\S]*?<\/lb-[\w-]+>/gi, '');
-            clean = clean.replace(/<lb-[\w-]+(?:\s[^>]*)?\/>/gi, '');
+            if (!isIllustrationModuleCompatEnabled()) {
+                clean = clean.replace(/<lb-[\w-]+(?:\s[^>]*)?>[\s\S]*?<\/lb-[\w-]+>/gi, '');
+                clean = clean.replace(/<lb-[\w-]+(?:\s[^>]*)?\/>/gi, '');
+            }
             return clean;
         },
         
@@ -1522,6 +1554,11 @@ characters의 details 중 성격에 다음을 반드시 포함하여 기술하�
 반환 형식:
 {
     "narrative": "전체 줄거리 요약",
+    "narrativeDetails": {
+        "storylines": [
+            { "name": "스토리라인 이름", "context": "현재 맥락", "keyPoints": ["핵심 포인트"], "ongoingTensions": ["진행 중 갈등"], "entities": ["관련 인물"] }
+        ]
+    },
     "entities": [ { "name": "이름", "appearance": "외모", "personality": "성격", "background": "배경" } ],
     "relations": [ { "entityA": "이름", "entityB": "이름", "type": "관계유형", "sentiment": "감정상태" } ],
     "world": { "tech": "기술수준", "rules": ["규칙들"] }
@@ -1535,10 +1572,12 @@ entities의 appearance에 다음을 반드시 포함하여 기술하십시오:
 - 원본 요약 데이터에서 유추 가능하면 반드시 추출
 
 [성격 필수 항목]
-entities의 personality에 다음을 반드시 포함하여 기술하십시오:
-- 성관념 (e.g. "개방적", "보수적", "순결주의")
-- 성적취향 (e.g. "이성애", "양성애", "S성향", "M성향")
-- 원본 요약 데이터에서 유추 가능하면 반드시 추출
+entities의 personality에는 일반 성격 특성만 기술하십시오.
+- 성관념은 personality 안에 섞지 말고 반드시 \`Sexual attitudes: ...\` 라벨로 분리하십시오.
+- 성적취향은 personality 안에 섞지 말고 반드시 \`Sexual preference: ...\` 라벨로 분리하십시오.
+- 직업은 background 안에 섞지 말고 반드시 \`Occupation: ...\` 라벨로 분리하십시오.
+- 현재 위치는 background 안에 섞지 말고 반드시 \`Current location: ...\` 라벨로 분리하십시오.
+- 직업/현재 위치는 대화나 지식 텍스트에 명시적이고 최신 단서가 있을 때만 쓰십시오. 추측해서 쓰지 마십시오.
 
 [출력 언어 규칙 / Output Language Rules]
 - 이름(name)은 반드시 "한글(English)" 형식으로 작성하십시오. (e.g. "정수진(Jeong Sujin)", "히비키(Hibiki)")
@@ -1552,6 +1591,11 @@ entities의 personality에 다음을 반드시 포함하여 기술하십시오:
 반환 형식:
 {
     "narrative": "전체 줄거리 요약",
+    "narrativeDetails": {
+        "storylines": [
+            { "name": "스토리라인 이름", "context": "현재 맥락", "keyPoints": ["핵심 포인트"], "ongoingTensions": ["진행 중 갈등"], "entities": ["관련 인물"] }
+        ]
+    },
     "entities": [ { "name": "이름", "appearance": "외모", "personality": "성격", "background": "배경" } ],
     "relations": [ { "entityA": "이름", "entityB": "이름", "type": "관계유형", "sentiment": "감정상태" } ],
     "world": { "tech": "기술수준", "rules": ["규칙들"] }
@@ -1590,6 +1634,11 @@ entities의 personality에 다음을 반드시 포함하여 기술하십시오:
 반드시 다음 JSON 형식만 반환하십시오:
 {
   "narrative": "검증 후 최종 줄거리 요약",
+  "narrativeDetails": {
+    "storylines": [
+      { "name": "스토리라인 이름", "context": "현재 맥락", "keyPoints": ["핵심 포인트"], "ongoingTensions": ["진행 중 갈등"], "entities": ["관련 인물"] }
+    ]
+  },
   "entities": [ { "name": "이름", "appearance": "외모", "personality": "성격", "background": "배경" } ],
   "relations": [ { "entityA": "이름", "entityB": "이름", "type": "관계유형", "sentiment": "감정상태" } ],
   "world": { "tech": "기술수준", "rules": ["규칙들"] },
@@ -1608,6 +1657,11 @@ entities의 personality에 다음을 반드시 포함하여 기술하십시오:
 반드시 다음 JSON 형식만 반환하십시오:
 {
   "narrative": "최종 줄거리 요약",
+  "narrativeDetails": {
+    "storylines": [
+      { "name": "스토리라인 이름", "context": "현재 맥락", "keyPoints": ["핵심 포인트"], "ongoingTensions": ["진행 중 갈등"], "entities": ["관련 인물"] }
+    ]
+  },
   "entities": [ { "name": "이름", "appearance": "외모", "personality": "성격", "background": "배경" } ],
   "relations": [ { "entityA": "이름", "entityB": "이름", "type": "관계유형", "sentiment": "감정상태" } ],
   "world": { "tech": "기술수준", "rules": ["규칙들"] }
@@ -1624,6 +1678,11 @@ entities의 personality에 다음을 반드시 포함하여 기술하십시오:
 반드시 다음 JSON 형식만 반환하십시오:
 {
   "narrative": "이번 창 기준 최종 줄거리 요약",
+  "narrativeDetails": {
+    "storylines": [
+      { "name": "스토리라인 이름", "context": "현재 맥락", "keyPoints": ["핵심 포인트"], "ongoingTensions": ["진행 중 갈등"], "entities": ["관련 인물"] }
+    ]
+  },
   "entities": [ { "name": "이름", "appearance": "외모", "personality": "성격", "background": "배경" } ],
   "relations": [ { "entityA": "이름", "entityB": "이름", "type": "관계유형", "sentiment": "감정상태" } ],
   "world": { "tech": "기술수준", "rules": ["규칙들"] }
@@ -1633,6 +1692,28 @@ entities의 personality에 다음을 반드시 포함하여 기술하십시오:
 - 반드시 제공된 원문 발췌를 가장 높은 우선순위로 삼으십시오.
 - 보조 검토 결과가 있으면 참고하되 그대로 복사하지 말고, 원문 근거와 일치하는지만 확인하십시오.
 - 이번 창에서 다루지 않은 필드는 기존/후보 데이터와 충돌하지 않는 선에서 일관되게 유지하십시오.
+- 반드시 JSON만 반환하십시오.`;
+        const MergeVerificationPrompt = `당신은 LIBRA 구조 데이터 병합 검증기입니다.
+기존 구조 데이터와 새로 분석된 후보 데이터를 비교하여, 기존 정보를 최대한 보존하면서 새 정보만 누적 병합한 최종 JSON을 반환하십시오.
+
+반드시 다음 JSON 형식만 반환하십시오:
+{
+  "narrative": "최종 줄거리 요약",
+  "narrativeDetails": {
+    "storylines": [
+      { "name": "스토리라인 이름", "context": "현재 맥락", "keyPoints": ["핵심 포인트"], "ongoingTensions": ["진행 중 갈등"], "entities": ["관련 인물"] }
+    ]
+  },
+  "entities": [ { "name": "이름", "appearance": "외모", "personality": "성격", "background": "배경" } ],
+  "relations": [ { "entityA": "이름", "entityB": "이름", "type": "관계유형", "sentiment": "감정상태" } ],
+  "world": { "tech": "기술수준", "rules": ["규칙들"] }
+}
+
+규칙:
+- 새 후보 데이터는 기본적으로 기존 데이터에 누적 병합하십시오.
+- 원문 근거 없이 기존 정보를 삭제하지 마십시오.
+- 명백한 충돌만 보수적으로 교정하십시오.
+- narrativeDetails.storylines도 누적 병합하되, 같은 스토리라인은 더 구체적인 정보를 우선하십시오.
 - 반드시 JSON만 반환하십시오.`;
 
         const ANALYSIS_MAX_LINE_CHARS = 900;
@@ -1703,6 +1784,17 @@ entities의 personality에 다음을 반드시 포함하여 기술하십시오:
 
         const compactStructuredSnapshot = (data) => ({
             narrative: truncateForLLM(data?.narrative || '', 1200, ' ...[TRUNCATED]... '),
+            narrativeDetails: {
+                storylines: normalizeNarrativeStorylinesForMerge(data?.narrativeDetails?.storylines, data?.narrative || '')
+                    .slice(0, 4)
+                    .map(storyline => ({
+                        name: truncateForLLM(storyline?.name || '', 100, ' ... '),
+                        context: truncateForLLM(storyline?.context || '', 260, ' ...[TRUNCATED]... '),
+                        keyPoints: compactTextArray(storyline?.keyPoints, 4, 160),
+                        ongoingTensions: compactTextArray(storyline?.ongoingTensions, 4, 160),
+                        entities: compactTextArray(storyline?.entities, 5, 80)
+                    }))
+            },
             entities: (Array.isArray(data?.entities) ? data.entities : [])
                 .slice(0, 10)
                 .map(entity => ({
@@ -1723,6 +1815,27 @@ entities의 personality에 다음을 반드시 포함하여 기술하십시오:
                 .filter(relation => relation.entityA && relation.entityB),
             world: {
                 tech: truncateForLLM(data?.world?.tech || '', 120, ' ... '),
+                classification: {
+                    primary: truncateForLLM(data?.world?.classification?.primary || '', 80, ' ... ')
+                },
+                exists: {
+                    technology: truncateForLLM(data?.world?.exists?.technology || '', 80, ' ... '),
+                    magic: !!data?.world?.exists?.magic,
+                    ki: !!data?.world?.exists?.ki,
+                    supernatural: !!data?.world?.exists?.supernatural
+                },
+                systems: {
+                    leveling: !!data?.world?.systems?.leveling,
+                    skills: !!data?.world?.systems?.skills,
+                    stats: !!data?.world?.systems?.stats,
+                    classes: !!data?.world?.systems?.classes
+                },
+                physics: {
+                    gravity: truncateForLLM(data?.world?.physics?.gravity || '', 60, ' ... '),
+                    time_flow: truncateForLLM(data?.world?.physics?.time_flow || data?.world?.physics?.timeFlow || '', 60, ' ... '),
+                    space: truncateForLLM(data?.world?.physics?.space || '', 80, ' ... ')
+                },
+                custom: compactTextArray(Object.values(normalizeWorldCustomRules(data?.world?.custom)), 10, 220),
                 rules: compactTextArray(data?.world?.rules, 10, 220)
             }
         });
@@ -1891,19 +2004,119 @@ entities의 personality에 다음을 반드시 포함하여 기술하십시오:
             }
             return best;
         };
+        const normalizeDelimitedList = (value) => dedupeTextArray(String(value || '')
+            .split(/\s*[;,]\s*|\s+\|\s+/)
+            .map(item => String(item || '').trim())
+            .filter(Boolean));
+        const pickLatestExplicitField = (value, patterns = []) => {
+            const text = String(value || '').trim();
+            if (!text) return '';
+            for (const pattern of patterns) {
+                const match = text.match(pattern);
+                if (!match) continue;
+                const picked = String(match[1] || '').trim().replace(/[.;,\s]+$/g, '').trim();
+                if (picked) return picked;
+            }
+            return '';
+        };
+        const stripLabeledFragments = (text, patterns = []) => {
+            let next = String(text || '');
+            for (const pattern of patterns) {
+                next = next.replace(pattern, ' ');
+            }
+            return next.replace(/\s{2,}/g, ' ').replace(/\s+([,;:.])/g, '$1').trim();
+        };
+        const extractImportedEntityFields = (entity) => {
+            const appearance = String(entity?.appearance || '').trim();
+            const personality = String(entity?.personality || '').trim();
+            const background = String(entity?.background || '').trim();
+            const explicitOccupation = String(entity?.occupation || entity?.background?.occupation || '').trim();
+            const explicitLocation = String(entity?.currentLocation || entity?.location || entity?.status?.currentLocation || '').trim();
+            const explicitSexualOrientation = String(entity?.sexualOrientation || entity?.personality?.sexualOrientation || '').trim();
+            const explicitSexualPreferences = Array.isArray(entity?.sexualPreferences)
+                ? entity.sexualPreferences.map(String).filter(Boolean)
+                : (Array.isArray(entity?.personality?.sexualPreferences) ? entity.personality.sexualPreferences.map(String).filter(Boolean) : []);
+
+            const sexualOrientationPatterns = [
+                /sexual attitudes?\s*[:\-]\s*([^.;\n]+)/i,
+                /sexual orientation\s*[:\-]\s*([^.;\n]+)/i,
+                /성관념\s*[:\-]\s*([^.;\n]+)/i
+            ];
+            const sexualPreferencePatterns = [
+                /sexual preferences?\s*[:\-]\s*([^.;\n]+)/i,
+                /sexual preference\s*[:\-]\s*([^.;\n]+)/i,
+                /성적취향\s*[:\-]\s*([^.;\n]+)/i
+            ];
+            const occupationPatterns = [
+                /\b(?:current|present|latest)\s+occupation\s*[:\-]\s*([^.;\n]+)/i,
+                /\boccupation\s*[:\-]\s*([^.;\n]+)/i,
+                /\bjob\s*[:\-]\s*([^.;\n]+)/i,
+                /직업\s*[:\-]\s*([^.;\n]+)/i
+            ];
+            const locationPatterns = [
+                /\b(?:currently|currently at|current|present|latest)\s+(?:location|whereabouts|place)\s*[:\-]\s*([^.;\n]+)/i,
+                /\bcurrent location\s*[:\-]\s*([^.;\n]+)/i,
+                /\blocation\s*[:\-]\s*([^.;\n]+)/i,
+                /현재\s*위치\s*[:\-]\s*([^.;\n]+)/i,
+                /위치\s*[:\-]\s*([^.;\n]+)/i
+            ];
+
+            const parsedSexualOrientation = explicitSexualOrientation || pickLatestExplicitField(personality, sexualOrientationPatterns);
+            const parsedSexualPreferences = explicitSexualPreferences.length > 0
+                ? dedupeTextArray(explicitSexualPreferences)
+                : normalizeDelimitedList(pickLatestExplicitField(personality, sexualPreferencePatterns));
+            const parsedOccupation = explicitOccupation || pickLatestExplicitField(background, occupationPatterns);
+            const parsedLocation = explicitLocation || pickLatestExplicitField(background, locationPatterns);
+
+            const cleanedPersonality = stripLabeledFragments(personality, [
+                /sexual attitudes?\s*[:\-]\s*[^.;\n]+[.;]?/gi,
+                /sexual orientation\s*[:\-]\s*[^.;\n]+[.;]?/gi,
+                /성관념\s*[:\-]\s*[^.;\n]+[.;]?/gi,
+                /sexual preferences?\s*[:\-]\s*[^.;\n]+[.;]?/gi,
+                /sexual preference\s*[:\-]\s*[^.;\n]+[.;]?/gi,
+                /성적취향\s*[:\-]\s*[^.;\n]+[.;]?/gi
+            ]);
+            const cleanedBackground = stripLabeledFragments(background, [
+                /\b(?:current|present|latest)\s+occupation\s*[:\-]\s*[^.;\n]+[.;]?/gi,
+                /\boccupation\s*[:\-]\s*[^.;\n]+[.;]?/gi,
+                /\bjob\s*[:\-]\s*[^.;\n]+[.;]?/gi,
+                /직업\s*[:\-]\s*[^.;\n]+[.;]?/gi,
+                /\b(?:currently|currently at|current|present|latest)\s+(?:location|whereabouts|place)\s*[:\-]\s*[^.;\n]+[.;]?/gi,
+                /\bcurrent location\s*[:\-]\s*[^.;\n]+[.;]?/gi,
+                /\blocation\s*[:\-]\s*[^.;\n]+[.;]?/gi,
+                /현재\s*위치\s*[:\-]\s*[^.;\n]+[.;]?/gi,
+                /위치\s*[:\-]\s*[^.;\n]+[.;]?/gi
+            ]);
+
+            return {
+                name: String(entity?.name || '').trim(),
+                appearance,
+                personality: cleanedPersonality,
+                background: cleanedBackground,
+                occupation: parsedOccupation,
+                currentLocation: parsedLocation,
+                sexualOrientation: parsedSexualOrientation,
+                sexualPreferences: parsedSexualPreferences
+            };
+        };
 
         const dedupeEntitiesForMerge = (entities) => {
             const merged = new Map();
             for (const entity of (Array.isArray(entities) ? entities : [])) {
-                const name = String(entity?.name || '').trim();
+                const normalized = extractImportedEntityFields(entity);
+                const name = String(normalized?.name || '').trim();
                 if (!name) continue;
                 const key = EntityManager.normalizeName(name);
-                const prev = merged.get(key) || { name, appearance: '', personality: '', background: '' };
+                const prev = merged.get(key) || { name, appearance: '', personality: '', background: '', occupation: '', currentLocation: '', sexualOrientation: '', sexualPreferences: [] };
                 merged.set(key, {
                     name: prev.name || name,
-                    appearance: coalesceKnowledgeField(prev.appearance, entity?.appearance),
-                    personality: coalesceKnowledgeField(prev.personality, entity?.personality),
-                    background: coalesceKnowledgeField(prev.background, entity?.background)
+                    appearance: coalesceKnowledgeField(prev.appearance, normalized?.appearance),
+                    personality: coalesceKnowledgeField(prev.personality, normalized?.personality),
+                    background: coalesceKnowledgeField(prev.background, normalized?.background),
+                    occupation: coalesceKnowledgeField(prev.occupation, normalized?.occupation),
+                    currentLocation: coalesceKnowledgeField(prev.currentLocation, normalized?.currentLocation),
+                    sexualOrientation: coalesceKnowledgeField(prev.sexualOrientation, normalized?.sexualOrientation),
+                    sexualPreferences: dedupeTextArray([...(Array.isArray(prev.sexualPreferences) ? prev.sexualPreferences : []), ...(Array.isArray(normalized?.sexualPreferences) ? normalized.sexualPreferences : [])])
                 });
             }
             return Array.from(merged.values());
@@ -1933,9 +2146,166 @@ entities의 personality에 다음을 반드시 포함하여 기술하십시오:
                 ...(Array.isArray(newRules) ? newRules : [])
             ]);
         };
+        const normalizeImportedWorldStatements = (world) => {
+            const statements = [];
+            const pushStatement = (value) => {
+                const text = String(value || '')
+                    .replace(/\r/g, '\n')
+                    .split('\n')
+                    .map(line => String(line || '').replace(/^[\s\-*•·▶▷☞]+/, '').trim())
+                    .filter(Boolean);
+                for (const line of text) {
+                    const normalized = line
+                        .replace(/^[0-9]+[.)]\s*/, '')
+                        .replace(/[;；]+/g, ', ')
+                        .trim();
+                    if (normalized) statements.push(normalized);
+                }
+            };
+            pushStatement(world?.tech);
+            for (const rule of (Array.isArray(world?.rules) ? world.rules : [])) pushStatement(rule);
+            const customRules = normalizeWorldCustomRules(world?.custom);
+            for (const value of Object.values(customRules)) pushStatement(value);
+            return dedupeTextArray(statements);
+        };
+        const buildImportedWorldRuleUpdate = (world = {}, fallbackNarrative = '') => {
+            const statements = normalizeImportedWorldStatements(world);
+            const sourceText = [
+                String(world?.__genreSourceText || '').trim(),
+                String(fallbackNarrative || '').trim(),
+                statements.join('\n')
+            ].filter(Boolean).join('\n');
+            const rawTech = String(world?.tech || '').trim();
+            const normalized = {
+                classification: world?.classification && typeof world.classification === 'object'
+                    ? safeClone(world.classification)
+                    : {},
+                exists: world?.exists && typeof world.exists === 'object' && !Array.isArray(world.exists)
+                    ? safeClone(world.exists)
+                    : {},
+                systems: world?.systems && typeof world.systems === 'object' && !Array.isArray(world.systems)
+                    ? safeClone(world.systems)
+                    : {},
+                physics: world?.physics && typeof world.physics === 'object' && !Array.isArray(world.physics)
+                    ? safeClone(world.physics)
+                    : {},
+                custom: normalizeWorldCustomRules(world?.custom),
+                __genreSourceText: sourceText
+            };
+
+            const lowerText = sourceText.toLowerCase();
+            const lowerTech = rawTech.toLowerCase();
+            const hasModernSignal = /(대한민국|한국|서울|현대|동시대|스마트폰|휴대폰|sns|소셜 미디어|감시 시스템|아이돌|연습생|고등학생|학교|소속사|연예계|modern|contemporary|present day|smartphone|social media|surveillance|idol|trainee)/i.test(sourceText);
+            const hasFutureSignal = /(미래|우주|은하|행성|안드로이드|로봇|사이버|네온|임플란트|증강현실|sf|sci-fi|futur|space|cyber|android|robot|implant|augmented reality)/i.test(sourceText);
+            const hasMedievalSignal = /(중세|봉건|왕국|제국|귀족|황궁|기사단|검과 마법|medieval|feudal|kingdom|empire|nobility)/i.test(sourceText);
+            if (lowerTech) {
+                normalized.exists.technology = rawTech;
+            } else if (hasFutureSignal) {
+                normalized.exists.technology = 'futuristic';
+            } else if (hasMedievalSignal) {
+                normalized.exists.technology = 'medieval';
+            } else if (hasModernSignal) {
+                normalized.exists.technology = 'modern';
+            }
+
+            if (/(마법|마나|마력|오라|주술|비전|정령|소환|arcane|magic|mana|aura|sorcery|spell|summon)/i.test(sourceText)) {
+                normalized.exists.magic = true;
+                normalized.exists.supernatural = true;
+            }
+            if (/(기\(氣\)|기운|내공|심법|단전|qi|chi|cultivation|dantian|inner energy)/i.test(sourceText)) {
+                normalized.exists.ki = true;
+                normalized.exists.supernatural = true;
+            }
+            if (/(초자연|유령|귀신|악령|괴담|초능력|빙의|supernatural|ghost|spirit|haunting|paranormal|superpower|possession)/i.test(sourceText)) {
+                normalized.exists.supernatural = true;
+            }
+            if (/(레벨|상태창|퀘스트|인벤토리|직업|클래스|레벨링|level|status window|quest|inventory|class|leveling)/i.test(sourceText)) {
+                normalized.systems.leveling = true;
+                normalized.systems.classes = true;
+            }
+            if (/(스킬|기술 트리|skill|skills)/i.test(sourceText)) {
+                normalized.systems.skills = true;
+            }
+            if (/(스탯|능력치|stats|stat points)/i.test(sourceText)) {
+                normalized.systems.stats = true;
+            }
+            if (/(길드|guild)/i.test(sourceText)) normalized.systems.guilds = true;
+            if (/(세력|파벌|faction|factions)/i.test(sourceText)) normalized.systems.factions = true;
+
+            for (const statement of statements) {
+                if (!statement) continue;
+                if (/^(일반|normal|보통)$/i.test(statement)) {
+                    normalized.physics.gravity = normalized.physics.gravity || 'normal';
+                    continue;
+                }
+                if (/(선형적|선형|linear)/i.test(statement)) {
+                    normalized.physics.time_flow = 'linear';
+                    continue;
+                }
+                if (/(비선형|nonlinear|non-linear)/i.test(statement)) {
+                    normalized.physics.time_flow = 'nonlinear';
+                    continue;
+                }
+                if (/(3차원|삼차원|three[-_\s]?dimensional)/i.test(statement)) {
+                    normalized.physics.space = 'three_dimensional';
+                    continue;
+                }
+                if (/(2차원|이차원|two[-_\s]?dimensional)/i.test(statement)) {
+                    normalized.physics.space = 'two_dimensional';
+                    continue;
+                }
+                if (/(4차원|사차원|four[-_\s]?dimensional)/i.test(statement)) {
+                    normalized.physics.space = 'four_dimensional';
+                    continue;
+                }
+                if (/(저중력|low gravity)/i.test(statement)) {
+                    normalized.physics.gravity = 'low';
+                    continue;
+                }
+                if (/(고중력|high gravity)/i.test(statement)) {
+                    normalized.physics.gravity = 'high';
+                    continue;
+                }
+                const currentCustom = normalizeWorldCustomRules(normalized.custom);
+                normalized.custom = {
+                    ...currentCustom,
+                    [`rule_${Object.keys(currentCustom).length + 1}`]: statement
+                };
+            }
+
+            return normalizeWorldRuleUpdate(normalized);
+        };
+        const normalizeNarrativeStorylinesForMerge = (storylines, fallbackNarrative = '') => {
+            const source = Array.isArray(storylines) ? storylines : [];
+            const normalized = source.map((storyline, idx) => ({
+                name: String(storyline?.name || `Storyline ${idx + 1}`).trim(),
+                context: String(storyline?.context || storyline?.currentContext || fallbackNarrative || '').trim(),
+                keyPoints: dedupeTextArray(storyline?.keyPoints),
+                ongoingTensions: dedupeTextArray(storyline?.ongoingTensions),
+                entities: dedupeTextArray(storyline?.entities)
+            })).filter(item => item.name || item.context || item.keyPoints.length > 0 || item.ongoingTensions.length > 0 || item.entities.length > 0);
+            if (normalized.length > 0) return normalized.slice(0, 6);
+            if (!String(fallbackNarrative || '').trim()) return [];
+            return [{
+                name: 'Imported Storyline',
+                context: String(fallbackNarrative || '').trim(),
+                keyPoints: [],
+                ongoingTensions: [],
+                entities: []
+            }];
+        };
         const fallbackChunkSummariesToStructured = (chunkSummaries, fallbackNarrative = "Cold Start: Initial analysis applied.") => {
             const merged = {
                 narrative: (Array.isArray(chunkSummaries) ? chunkSummaries : []).map(c => (c.events || []).join('; ')).filter(Boolean).join(' ') || fallbackNarrative,
+                narrativeDetails: {
+                    storylines: normalizeNarrativeStorylinesForMerge((Array.isArray(chunkSummaries) ? chunkSummaries : []).map((chunk, idx) => ({
+                        name: `Imported Storyline ${idx + 1}`,
+                        context: Array.isArray(chunk?.events) ? chunk.events.join('; ') : '',
+                        keyPoints: Array.isArray(chunk?.events) ? chunk.events : [],
+                        ongoingTensions: [],
+                        entities: Array.isArray(chunk?.characters) ? chunk.characters.map(ch => ch?.name).filter(Boolean) : []
+                    })), fallbackNarrative)
+                },
                 entities: [],
                 relations: [],
                 world: { tech: "unknown", rules: [] }
@@ -1945,7 +2315,7 @@ entities의 personality에 다음을 반드시 포함하여 기술하십시오:
                 for (const ch of (chunk.characters || [])) {
                     if (ch.name && !nameSet.has(ch.name)) {
                         nameSet.add(ch.name);
-                        merged.entities.push({ name: ch.name, appearance: ch.details || "", personality: "", background: "" });
+                        merged.entities.push({ name: ch.name, appearance: "", personality: ch.details || "", background: "" });
                     }
                 }
                 for (const rel of (chunk.relationships || [])) {
@@ -1962,6 +2332,9 @@ entities의 personality에 다음을 반드시 포함하여 기술하십시오:
             if (valid.length === 0) return null;
             return sanitizeStructuredKnowledge({
                 narrative: valid.map(item => item?.narrative).find(value => String(value || '').trim()) || '',
+                narrativeDetails: {
+                    storylines: normalizeNarrativeStorylinesForMerge(valid.flatMap(item => Array.isArray(item?.narrativeDetails?.storylines) ? item.narrativeDetails.storylines : []))
+                },
                 entities: valid.flatMap(item => Array.isArray(item?.entities) ? item.entities : []),
                 relations: valid.flatMap(item => Array.isArray(item?.relations) ? item.relations : []),
                 world: {
@@ -2091,13 +2464,105 @@ entities의 personality에 다음을 반드시 포함하여 기술하십시오:
 
         const sanitizeStructuredKnowledge = (finalData) => ({
             narrative: String(finalData?.narrative || '').trim(),
+            narrativeDetails: {
+                storylines: normalizeNarrativeStorylinesForMerge(finalData?.narrativeDetails?.storylines, finalData?.narrative || '')
+            },
             entities: dedupeEntitiesForMerge(finalData?.entities),
             relations: dedupeRelationsForMerge(finalData?.relations),
             world: {
                 tech: String(finalData?.world?.tech || '').trim(),
-                rules: dedupeTextArray(finalData?.world?.rules)
+                classification: finalData?.world?.classification && typeof finalData.world.classification === 'object'
+                    ? safeClone(finalData.world.classification)
+                    : {},
+                exists: finalData?.world?.exists && typeof finalData.world.exists === 'object' && !Array.isArray(finalData.world.exists)
+                    ? safeClone(finalData.world.exists)
+                    : {},
+                systems: finalData?.world?.systems && typeof finalData.world.systems === 'object' && !Array.isArray(finalData.world.systems)
+                    ? safeClone(finalData.world.systems)
+                    : {},
+                physics: finalData?.world?.physics && typeof finalData.world.physics === 'object' && !Array.isArray(finalData.world.physics)
+                    ? safeClone(finalData.world.physics)
+                    : {},
+                custom: normalizeWorldCustomRules(finalData?.world?.custom),
+                __genreSourceText: String(finalData?.world?.__genreSourceText || '').trim(),
+                rules: dedupeTextArray([
+                    ...(Array.isArray(finalData?.world?.rules) ? finalData.world.rules : []),
+                    ...Object.values(normalizeWorldCustomRules(finalData?.world?.custom))
+                ])
             }
         });
+        const buildImportedKnowledgeSignalText = (sanitized) => {
+            const parts = [
+                String(sanitized?.narrative || '').trim(),
+                String(sanitized?.world?.tech || '').trim(),
+                ...(Array.isArray(sanitized?.world?.rules) ? sanitized.world.rules : []),
+                ...((sanitized?.narrativeDetails?.storylines || []).flatMap(storyline => [
+                    storyline?.name || '',
+                    storyline?.context || '',
+                    ...(Array.isArray(storyline?.keyPoints) ? storyline.keyPoints : []),
+                    ...(Array.isArray(storyline?.ongoingTensions) ? storyline.ongoingTensions : [])
+                ])),
+                ...((sanitized?.entities || []).flatMap(entity => [
+                    entity?.name || '',
+                    entity?.appearance || '',
+                    entity?.personality || '',
+                    entity?.background || ''
+                ]))
+            ].map(item => String(item || '').trim()).filter(Boolean);
+            return parts.join('\n');
+        };
+        const applyGlobalWorldFeaturesFromImportedKnowledge = (profile, sanitized) => {
+            if (!profile?.global) return;
+            const signalText = buildImportedKnowledgeSignalText(sanitized);
+            const complexAnalysis = ComplexWorldDetector.analyze(signalText, '');
+            if (complexAnalysis.indicators.multiverse) {
+                profile.global.multiverse = true;
+                profile.global.dimensionTravel = true;
+            }
+            if (complexAnalysis.indicators.timeTravel) profile.global.timeTravel = true;
+            if (complexAnalysis.indicators.metaNarrative) profile.global.metaNarrative = true;
+            if (complexAnalysis.indicators.virtualReality) profile.global.virtualReality = true;
+            if (complexAnalysis.indicators.dreamWorld) profile.global.dreamWorld = true;
+            if (complexAnalysis.indicators.reincarnationPossession) profile.global.reincarnationPossession = true;
+            if (complexAnalysis.indicators.systemInterface) profile.global.systemInterface = true;
+
+            const lowered = signalText.toLowerCase();
+            if (!profile.global.systemInterface && /(level|status window|quest|inventory|skill|stats|class|system|gate|awakener|hunter|tutorial|achievement|성좌|회귀자|각성자|게이트|상태창|레벨|스킬|스탯|직업|시스템)/i.test(lowered)) {
+                profile.global.systemInterface = true;
+            }
+        };
+        const refreshSectionWorldFromImportedKnowledge = async (sanitized, opts = {}) => {
+            try {
+                const worldPrompt = HierarchicalWorldManager.formatForPrompt();
+                const worldStatePrompt = WorldStateTracker.formatForPrompt();
+                const narrativePrompt = NarrativeTracker.formatForPrompt();
+                if (!worldPrompt && !worldStatePrompt && !narrativePrompt) {
+                    SectionWorldInferenceManager.resetState();
+                    return '';
+                }
+                const focusCharacters = dedupeTextArray([
+                    ...(Array.isArray(sanitized?.entities) ? sanitized.entities.map(entity => entity?.name) : []),
+                    ...((sanitized?.narrativeDetails?.storylines || []).flatMap(storyline => Array.isArray(storyline?.entities) ? storyline.entities : []))
+                ]).slice(0, 8);
+                const memoryHints = compactTextArray(sanitized?.world?.rules, 4, 140);
+                const loreHints = compactTextArray((sanitized?.narrativeDetails?.storylines || []).flatMap(storyline => Array.isArray(storyline?.keyPoints) ? storyline.keyPoints : []), 4, 140);
+                return await SectionWorldInferenceManager.inferPrompt(MemoryEngine.CONFIG, {
+                    turn: MemoryEngine.getCurrentTurn?.() || 0,
+                    userMsg: String(opts?.sourceLabel || opts?.worldNote || 'Imported knowledge').trim(),
+                    worldPrompt,
+                    worldStatePrompt,
+                    narrativePrompt,
+                    directorPrompt: Director.formatForPrompt(),
+                    storyAuthorPrompt: StoryAuthor.formatForPrompt(),
+                    focusCharacters,
+                    memoryHints,
+                    loreHints
+                });
+            } catch (e) {
+                console.warn('[LIBRA] Section world refresh after import failed:', e?.message || e);
+                return '';
+            }
+        };
 
         const mergeStructuredKnowledge = async (finalData, options = {}) => {
             const opts = {
@@ -2117,28 +2582,49 @@ entities의 personality에 다음을 반드시 포함하여 기술하십시오:
 
                 if (opts.updateNarrative) {
                     const narrative = NarrativeTracker.getState();
-                    narrative.storylines = [{
-                        id: 1,
-                        name: "Initial Storyline",
-                        entities: (sanitized.entities || []).map(e => e.name),
+                    const storylines = normalizeNarrativeStorylinesForMerge(
+                        sanitized?.narrativeDetails?.storylines,
+                        sanitized.narrative || ''
+                    );
+                    narrative.storylines = storylines.map((storyline, idx) => ({
+                        id: idx + 1,
+                        name: storyline.name || `Imported Storyline ${idx + 1}`,
+                        entities: storyline.entities.length > 0 ? storyline.entities : (sanitized.entities || []).map(e => e.name).filter(Boolean),
                         turns: [0],
                         firstTurn: 0,
                         lastTurn: 0,
-                        recentEvents: [{ turn: 0, brief: "Cold Start: Initial summary applied." }],
-                        summaries: [{ upToTurn: 0, summary: sanitized.narrative || '', keyPoints: [], ongoingTensions: [], timestamp: Date.now() }],
-                        currentContext: sanitized.narrative || '',
-                        keyPoints: [],
-                        ongoingTensions: []
-                    }];
+                        recentEvents: [{ turn: 0, brief: storyline.context || sanitized.narrative || "Imported knowledge summary applied." }],
+                        summaries: [{
+                            upToTurn: 0,
+                            summary: storyline.context || sanitized.narrative || '',
+                            keyPoints: [...storyline.keyPoints],
+                            ongoingTensions: [...storyline.ongoingTensions],
+                            timestamp: Date.now()
+                        }],
+                        currentContext: storyline.context || sanitized.narrative || '',
+                        keyPoints: [...storyline.keyPoints],
+                        ongoingTensions: [...storyline.ongoingTensions]
+                    }));
                 }
 
                 // 2. Entities & Relations 반영
                 for (const ent of (sanitized.entities || [])) {
                     if (!ent.name) continue;
+                    const normalizedEntity = extractImportedEntityFields(ent);
                     EntityManager.updateEntity(ent.name, {
-                        appearance: { features: [ent.appearance || ''] },
-                        personality: { traits: [ent.personality || ''] },
-                        background: { origin: ent.background || '' },
+                        appearance: { features: [normalizedEntity.appearance || ''] },
+                        personality: {
+                            traits: [normalizedEntity.personality || ''],
+                            sexualOrientation: normalizedEntity.sexualOrientation || '',
+                            sexualPreferences: Array.isArray(normalizedEntity.sexualPreferences) ? normalizedEntity.sexualPreferences : []
+                        },
+                        background: {
+                            origin: normalizedEntity.background || '',
+                            occupation: normalizedEntity.occupation || ''
+                        },
+                        status: {
+                            currentLocation: normalizedEntity.currentLocation || ''
+                        },
                         source: opts.updateNarrative ? 'cold_start' : 'hypa_v3_import',
                         s_id: opts.sourceId
                     }, lore);
@@ -2158,17 +2644,13 @@ entities의 personality에 다음을 반드시 포함하여 기술하십시오:
                 const profile = HierarchicalWorldManager.getProfile();
                 const rootNode = profile?.nodes?.get(profile?.rootId);
                 if (rootNode && sanitized.world) {
-                    const techValue = String(sanitized.world.tech || '').trim();
-                    if (techValue && !/^(unknown|none|n\/a)$/i.test(techValue)) {
-                        rootNode.rules.exists.technology = techValue;
-                    }
-                    rootNode.rules.physics.special_phenomena = dedupeWorldRulesForMerge(
-                        rootNode.rules?.physics?.special_phenomena,
-                        sanitized.world.rules
-                    );
+                    const worldRuleUpdate = buildImportedWorldRuleUpdate(sanitized.world, sanitized.narrative || '');
+                    HierarchicalWorldManager.updateNode(rootNode.id, { rules: worldRuleUpdate });
                     rootNode.meta.notes = opts.worldNote;
                     rootNode.meta.s_id = opts.sourceId;
                 }
+                applyGlobalWorldFeaturesFromImportedKnowledge(profile, sanitized);
+                await refreshSectionWorldFromImportedKnowledge(sanitized, opts);
 
                 // 4. 모든 매니저의 상태를 하나의 로어북 배열로 통합
                 // 각 saveState는 lore 배열을 직접 수정하며, 최종 저장은 아래에서 한 번만 수행합니다.
@@ -2281,7 +2763,11 @@ entities의 personality에 다음을 반드시 포함하여 기술하십시오:
                 name: entity.name || '',
                 appearance: [...(entity.appearance?.features || []), ...(entity.appearance?.distinctiveMarks || []), ...(entity.appearance?.clothing || [])].filter(Boolean).join(', '),
                 personality: [...(entity.personality?.traits || []), ...(entity.personality?.likes || []), ...(entity.personality?.dislikes || [])].filter(Boolean).join(', '),
-                background: [entity.background?.origin || '', entity.background?.occupation || '', ...(entity.background?.history || [])].filter(Boolean).join(', ')
+                background: [entity.background?.origin || '', ...(entity.background?.history || [])].filter(Boolean).join(', '),
+                occupation: entity.background?.occupation || '',
+                currentLocation: entity.status?.currentLocation || '',
+                sexualOrientation: entity.personality?.sexualOrientation || '',
+                sexualPreferences: Array.isArray(entity.personality?.sexualPreferences) ? entity.personality.sexualPreferences : []
             }));
             const relations = Array.from(EntityManager.getRelationCache().values()).map(relation => ({
                 entityA: relation.entityA || '',
@@ -2291,15 +2777,73 @@ entities의 personality에 다음을 반드시 포함하여 기술하십시오:
             }));
             const profile = HierarchicalWorldManager.getProfile();
             const rootNode = profile?.nodes?.get(profile?.rootId);
+            const rootRules = rootNode?.rules || {};
             return sanitizeStructuredKnowledge({
                 narrative,
+                narrativeDetails: {
+                    storylines: storylines.map(storyline => ({
+                        name: storyline?.name || '',
+                        context: storyline?.currentContext || '',
+                        keyPoints: Array.isArray(storyline?.keyPoints) ? storyline.keyPoints : [],
+                        ongoingTensions: Array.isArray(storyline?.ongoingTensions) ? storyline.ongoingTensions : [],
+                        entities: Array.isArray(storyline?.entities) ? storyline.entities : []
+                    }))
+                },
                 entities,
                 relations,
                 world: {
-                    tech: rootNode?.rules?.exists?.technology || '',
-                    rules: rootNode?.rules?.physics?.special_phenomena || []
+                    tech: rootRules?.exists?.technology || '',
+                    classification: { primary: inferWorldClassificationLabel(rootRules, '') },
+                    exists: safeClone(rootRules?.exists || {}),
+                    systems: safeClone(rootRules?.systems || {}),
+                    physics: safeClone(rootRules?.physics || {}),
+                    custom: safeClone(rootRules?.custom || {}),
+                    rules: [
+                        ...(Array.isArray(rootRules?.physics?.special_phenomena) ? rootRules.physics.special_phenomena : []),
+                        ...Object.values(normalizeWorldCustomRules(rootRules?.custom || {}))
+                    ]
                 }
             });
+        };
+        const hasMeaningfulStructuredSnapshot = (snapshot) => {
+            if (!snapshot || typeof snapshot !== 'object') return false;
+            if (String(snapshot?.narrative || '').trim()) return true;
+            if (Array.isArray(snapshot?.entities) && snapshot.entities.length > 0) return true;
+            if (Array.isArray(snapshot?.relations) && snapshot.relations.length > 0) return true;
+            if (Array.isArray(snapshot?.world?.rules) && snapshot.world.rules.length > 0) return true;
+            if (Array.isArray(snapshot?.narrativeDetails?.storylines) && snapshot.narrativeDetails.storylines.length > 0) return true;
+            return false;
+        };
+        const verifyMergedStructuredKnowledge = async (currentData, incomingData, taskLabel = 'merge-verify') => {
+            const currentSnapshot = sanitizeStructuredKnowledge(currentData || {});
+            const incomingSnapshot = sanitizeStructuredKnowledge(incomingData || {});
+            if (!hasMeaningfulStructuredSnapshot(currentSnapshot)) {
+                return incomingSnapshot;
+            }
+            const fallbackMerged = sanitizeStructuredKnowledge(
+                mergeStructuredKnowledgeSnapshots(currentSnapshot, incomingSnapshot) || incomingSnapshot
+            );
+            if (!(LLMProvider.isConfigured(MemoryEngine.CONFIG, 'primary') || LLMProvider.isConfigured(MemoryEngine.CONFIG, 'aux'))) {
+                return fallbackMerged;
+            }
+            try {
+                const reviewInput = [
+                    `[기존 구조 데이터 / Existing Structured Data]`,
+                    buildCompactStructuredJson(currentSnapshot, REVIEW_DATA_MAX_CHARS),
+                    ``,
+                    `[새 후보 데이터 / Incoming Candidate Data]`,
+                    buildCompactStructuredJson(incomingSnapshot, REVIEW_DATA_MAX_CHARS)
+                ].join('\n');
+                const profile = LLMProvider.isConfigured(MemoryEngine.CONFIG, 'primary') ? 'primary' : 'aux';
+                const verified = await runMaintenanceLLM(() =>
+                    LLMProvider.call(MemoryEngine.CONFIG, MergeVerificationPrompt, reviewInput, { maxTokens: 1800, profile })
+                , `${taskLabel}-${profile}`);
+                const parsed = extractJson(verified?.content || '');
+                return parsed ? sanitizeStructuredKnowledge(parsed) : fallbackMerged;
+            } catch (e) {
+                console.warn('[LIBRA] Structured merge verification fallback:', e?.message || e);
+                return fallbackMerged;
+            }
         };
 
         const replaceStructuredKnowledge = async (finalData, options = {}) => {
@@ -2327,10 +2871,21 @@ entities의 personality에 다음을 반드시 포함하여 기술하십시오:
                 EntityManager.clearCache();
                 for (const ent of (sanitized.entities || [])) {
                     if (!ent.name) continue;
+                    const normalizedEntity = extractImportedEntityFields(ent);
                     EntityManager.updateEntity(ent.name, {
-                        appearance: { features: [ent.appearance || ''] },
-                        personality: { traits: [ent.personality || ''] },
-                        background: { origin: ent.background || '' },
+                        appearance: { features: [normalizedEntity.appearance || ''] },
+                        personality: {
+                            traits: [normalizedEntity.personality || ''],
+                            sexualOrientation: normalizedEntity.sexualOrientation || '',
+                            sexualPreferences: Array.isArray(normalizedEntity.sexualPreferences) ? normalizedEntity.sexualPreferences : []
+                        },
+                        background: {
+                            origin: normalizedEntity.background || '',
+                            occupation: normalizedEntity.occupation || ''
+                        },
+                        status: {
+                            currentLocation: normalizedEntity.currentLocation || ''
+                        },
                         source: 'reanalysis',
                         s_id: opts.sourceId
                     }, lore);
@@ -2345,19 +2900,25 @@ entities의 personality에 다음을 반드시 포함하여 기술하십시오:
                 }
 
                 NarrativeTracker.resetState({
-                    storylines: [{
-                        id: 1,
-                        name: 'Rebuilt Storyline',
-                        entities: (sanitized.entities || []).map(e => e.name).filter(Boolean),
+                    storylines: normalizeNarrativeStorylinesForMerge(sanitized?.narrativeDetails?.storylines, sanitized.narrative || '').map((storyline, idx) => ({
+                        id: idx + 1,
+                        name: storyline.name || `Rebuilt Storyline ${idx + 1}`,
+                        entities: storyline.entities.length > 0 ? storyline.entities : (sanitized.entities || []).map(e => e.name).filter(Boolean),
                         turns: [0],
                         firstTurn: 0,
                         lastTurn: 0,
-                        recentEvents: [{ turn: 0, brief: 'Past conversation reanalysis applied.' }],
-                        summaries: [{ upToTurn: 0, summary: sanitized.narrative || '', keyPoints: [], ongoingTensions: [], timestamp: Date.now() }],
-                        currentContext: sanitized.narrative || '',
-                        keyPoints: [],
-                        ongoingTensions: []
-                    }],
+                        recentEvents: [{ turn: 0, brief: storyline.context || 'Past conversation reanalysis applied.' }],
+                        summaries: [{
+                            upToTurn: 0,
+                            summary: storyline.context || sanitized.narrative || '',
+                            keyPoints: [...storyline.keyPoints],
+                            ongoingTensions: [...storyline.ongoingTensions],
+                            timestamp: Date.now()
+                        }],
+                        currentContext: storyline.context || sanitized.narrative || '',
+                        keyPoints: [...storyline.keyPoints],
+                        ongoingTensions: [...storyline.ongoingTensions]
+                    })),
                     turnLog: [],
                     lastSummaryTurn: 0
                 });
@@ -2369,11 +2930,8 @@ entities의 personality에 다음을 반드시 포함하여 기술하십시오:
                 const profile = HierarchicalWorldManager.getProfile();
                 const rootNode = profile?.nodes?.get(profile?.rootId);
                 if (rootNode) {
-                    rootNode.rules = rootNode.rules || { exists: {}, systems: {}, physics: {}, custom: {} };
-                    rootNode.rules.exists = rootNode.rules.exists || {};
-                    rootNode.rules.physics = rootNode.rules.physics || {};
-                    rootNode.rules.exists.technology = String(sanitized.world?.tech || '').trim();
-                    rootNode.rules.physics.special_phenomena = [...(sanitized.world?.rules || [])];
+                    const worldRuleUpdate = buildImportedWorldRuleUpdate(sanitized.world, sanitized.narrative || '');
+                    HierarchicalWorldManager.updateNode(rootNode.id, { rules: worldRuleUpdate });
                     rootNode.meta.notes = opts.worldNote;
                     rootNode.meta.s_id = opts.sourceId;
                 }
@@ -2444,6 +3002,15 @@ entities의 personality에 다음을 반드시 포함하여 기술하십시오:
             if (!finalData) {
                 const merged = {
                     narrative: chunkSummaries.map(c => (c.events || []).join('; ')).filter(Boolean).join(' ') || "Imported knowledge summary applied.",
+                    narrativeDetails: {
+                        storylines: normalizeNarrativeStorylinesForMerge(chunkSummaries.map((chunk, idx) => ({
+                            name: `Imported Storyline ${idx + 1}`,
+                            context: Array.isArray(chunk?.events) ? chunk.events.join('; ') : '',
+                            keyPoints: Array.isArray(chunk?.events) ? chunk.events : [],
+                            ongoingTensions: [],
+                            entities: Array.isArray(chunk?.characters) ? chunk.characters.map(ch => ch?.name).filter(Boolean) : []
+                        })))
+                    },
                     entities: [],
                     relations: [],
                     world: { tech: "unknown", rules: [] }
@@ -2453,7 +3020,7 @@ entities의 personality에 다음을 반드시 포함하여 기술하십시오:
                     for (const ch of (chunk.characters || [])) {
                         if (ch.name && !nameSet.has(ch.name)) {
                             nameSet.add(ch.name);
-                            merged.entities.push({ name: ch.name, appearance: ch.details || "", personality: "", background: "" });
+                            merged.entities.push({ name: ch.name, appearance: "", personality: ch.details || "", background: "" });
                         }
                     }
                     for (const rel of (chunk.relationships || [])) {
@@ -2657,11 +3224,13 @@ entities의 personality에 다음을 반드시 포함하여 기술하십시오:
                     }
                 }
 
-                await replaceStructuredKnowledge(finalData, {
+                const verifiedMergedData = await verifyMergedStructuredKnowledge(currentData, finalData, 'cold-reanalysis-verify');
+                await mergeStructuredKnowledge(verifiedMergedData, {
+                    updateNarrative: true,
                     sourceId: 'reanalysis',
-                    worldNote: 'Rebuilt via Reanalysis'
+                    worldNote: 'Merged via Reanalysis Verification'
                 });
-                LMAI_GUI.toast("♻️ 과거 대화 재분석 및 재구축 완료");
+                LMAI_GUI.toast("♻️ 과거 대화 재분석 누적 병합 및 검증 완료");
             } catch (e) {
                 console.error("[LIBRA] Reanalysis Error:", e);
                 LMAI_GUI.toast(`❌ 재분석 실패: ${e.message || e}`);
@@ -2674,12 +3243,18 @@ entities의 personality에 다음을 반드시 포함하여 기술하십시오:
             if (!MemoryEngine.CONFIG.useLLM) {
                 throw new Error("LLM 사용이 꺼져 있어 구조화 분석을 진행할 수 없습니다.");
             }
-            const finalData = await synthesizeStructuredKnowledge(rawTexts, `import-${String(sourceLabel || 'knowledge').toLowerCase().replace(/[^a-z0-9_-]+/g, '-')}`);
+            const synthesizedData = await synthesizeStructuredKnowledge(rawTexts, `import-${String(sourceLabel || 'knowledge').toLowerCase().replace(/[^a-z0-9_-]+/g, '-')}`);
+            const currentData = buildCurrentStructuredSnapshot([]);
+            const finalData = await verifyMergedStructuredKnowledge(
+                currentData,
+                synthesizedData,
+                `import-verify-${String(sourceLabel || 'knowledge').toLowerCase().replace(/[^a-z0-9_-]+/g, '-')}`
+            );
             if (!finalData) {
                 throw new Error("가져온 지식 데이터를 구조화하지 못했습니다.");
             }
             await mergeStructuredKnowledge(finalData, {
-                updateNarrative: false,
+                updateNarrative: true,
                 worldNote: `Updated via ${sourceLabel} Import`,
                 sourceId: 'hypa_v3'
             });
@@ -2701,7 +3276,9 @@ entities의 personality에 다음을 반드시 포함하여 기술하십시오:
                 const msgs = buildAnalyzableMessages(chat);
                 
                 if (msgs.length === 0) throw new Error("분석할 대화 내역이 없습니다.");
-                const finalData = await analyzeConversationMessages(msgs, 'cold-start');
+                const analyzedData = await analyzeConversationMessages(msgs, 'cold-start');
+                const currentData = buildCurrentStructuredSnapshot(currentLore);
+                const finalData = await verifyMergedStructuredKnowledge(currentData, analyzedData, 'cold-start-verify');
 
                 if (MemoryEngine.CONFIG.debug) console.log("[LIBRA] Cold Start Synthesis Data:", finalData);
                 
@@ -7577,6 +8154,7 @@ entities의 personality에 다음을 반드시 포함하여 기술하십시오:
             useLLM: true,
             cbsEnabled: true,
             emotionEnabled: true,
+            illustrationModuleCompatEnabled: false,
             preventUserIgnoreEnabled: false,
             storyAuthorEnabled: true,
             storyAuthorMode: 'proactive',
@@ -10057,6 +10635,7 @@ const updateConfigFromArgs = async () => {
     cfg.cbsEnabled = getVal('cbsEnabled', 'cbs_enabled', 'boolean', null, true);
     cfg.useLorebookRAG = getVal('useLorebookRAG', 'use_lorebook_rag', 'boolean', null, true);
     cfg.emotionEnabled = getVal('emotionEnabled', 'emotion_enabled', 'boolean', null, true);
+    cfg.illustrationModuleCompatEnabled = getVal('illustrationModuleCompatEnabled', 'illustration_module_compat_enabled', 'boolean', null, false);
     cfg.preventUserIgnoreEnabled = getVal('preventUserIgnoreEnabled', 'prevent_user_ignore_enabled', 'boolean', null, false);
     cfg.storyAuthorEnabled = getVal('storyAuthorEnabled', 'story_author_enabled', 'boolean', null, true);
     cfg.gcBatchSize = getVal('gcBatchSize', 'gc_batch_size', 'number', null, MEMORY_PRESETS.general.gcBatchSize);
@@ -10464,6 +11043,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
         <div class="tr"><label>CBS 엔진 사용</label><label class="tog"><input type="checkbox" id="scbs" title="매크로 및 조건부 텍스트({{...}})를 처리합니다."><span class="tsl"></span></label></div>
         <div class="tr"><label>로어북 동적 참조 (RAG)</label><label class="tog"><input type="checkbox" id="slrag" title="일반 로어북의 설정도 검색하여 AI에게 전달합니다."><span class="tsl"></span></label></div>
         <div class="tr"><label>감정 분석 사용</label><label class="tog"><input type="checkbox" id="semo" title="감정 분석 엔진을 활성화합니다."><span class="tsl"></span></label></div>
+        <div class="tr"><label>라이트보드 삽화 태그 호환</label><label class="tog"><input type="checkbox" id="silc" title="활성화 시 <lb-xnai> 같은 라이트보드 삽화 태그를 LIBRA 정제 단계에서 제거하지 않고 그대로 유지합니다."><span class="tsl"></span></label></div>
         <div class="tr"><label>유저 무시 금지</label><label class="tog"><input type="checkbox" id="sugi" title="활성화 시 현재 유저 인풋을 최상위 응답 축으로 두고, 다른 인젝션 요소가 그 인풋을 보완하도록 조정합니다."><span class="tsl"></span></label></div>
         <div class="tr"><label>디버그 모드</label><label class="tog"><input type="checkbox" id="sdb"><span class="tsl"></span></label></div>
       </div>
@@ -11175,6 +11755,12 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
                 });
                 toast("🧠 하이파 V3 지식을 캐릭터/세계관에 반영 중...");
                 await ColdStartManager.integrateImportedKnowledge(payload.knowledgeTexts, 'Hypa V3');
+                lore = MemoryEngine.getLorebook(char, activeChat) || lore;
+                syncGuiSnapshotsFromRuntime();
+                renderEnts();
+                renderNarrative();
+                renderWorld();
+                filterMems();
                 lastHypaImportSignature = hypaSignature;
                 LIBRAActivityDashboard.setStage('하이파 V3 구조화 반영 완료', 92, {
                     activeTask: '최종 정리'
@@ -11435,7 +12021,13 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
                 const custom = Array.isArray(effectiveRules.custom)
                     ? effectiveRules.custom.map(v => String(v || '').trim()).filter(Boolean)
                     : (effectiveRules.custom && typeof effectiveRules.custom === 'object')
-                        ? Object.entries(effectiveRules.custom).map(([key, value]) => `${key}: ${String(value || '').trim()}`).filter(Boolean)
+                        ? Object.entries(effectiveRules.custom)
+                            .map(([key, value]) => {
+                                const normalizedValue = String(value || '').trim();
+                                if (!normalizedValue) return '';
+                                return /^rule_\d+$/i.test(String(key || '').trim()) ? normalizedValue : `${key}: ${normalizedValue}`;
+                            })
+                            .filter(Boolean)
                         : [];
                 const lines = [];
 
@@ -11543,6 +12135,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
                 cbsEnabled: overlay.querySelector("#scbs").checked,
                 useLorebookRAG: overlay.querySelector("#slrag").checked,
                 emotionEnabled: overlay.querySelector("#semo").checked,
+                illustrationModuleCompatEnabled: overlay.querySelector("#silc").checked,
                 preventUserIgnoreEnabled: overlay.querySelector("#sugi").checked,
                 storyAuthorEnabled: storyAuthorMode !== 'disabled',
                 directorEnabled: directorMode !== 'disabled',
@@ -11609,6 +12202,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
                 }
             };
             if (merged.sectionWorldInferenceEnabled === undefined) merged.sectionWorldInferenceEnabled = true;
+            if (merged.illustrationModuleCompatEnabled === undefined) merged.illustrationModuleCompatEnabled = false;
             if (merged.preventUserIgnoreEnabled === undefined) merged.preventUserIgnoreEnabled = false;
             return merged;
         };
@@ -11640,6 +12234,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
             overlay.querySelector("#scbs").checked = c.cbsEnabled !== false;
             overlay.querySelector("#slrag").checked = c.useLorebookRAG !== false;
             overlay.querySelector("#semo").checked = c.emotionEnabled !== false;
+            overlay.querySelector("#silc").checked = !!c.illustrationModuleCompatEnabled;
             overlay.querySelector("#sugi").checked = !!c.preventUserIgnoreEnabled;
             overlay.querySelector("#sep").value = (c.embed && c.embed.provider) || "openai";
             overlay.querySelector("#seu").value = (c.embed && c.embed.url) || "";
@@ -11958,7 +12553,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
 
         overlay.querySelector('#btn-reset-settings').onclick = () => {
             if (!confirm("모든 설정을 초기값으로 되돌리시겠습니까?")) return;
-            _CFG = { useLLM: true, cbsEnabled: true, useLorebookRAG: true, emotionEnabled: true, preventUserIgnoreEnabled: false, storyAuthorEnabled: true, storyAuthorMode: "proactive", directorEnabled: true, directorMode: "strong", sectionWorldInferenceEnabled: true, debug: false, memoryPreset: "general", maxLimit: MEMORY_PRESETS.general.maxLimit, threshold: MEMORY_PRESETS.general.threshold, simThreshold: MEMORY_PRESETS.general.simThreshold, gcBatchSize: MEMORY_PRESETS.general.gcBatchSize, coldStartScopePreset: "all", coldStartHistoryLimit: 0, weightMode: "auto", worldAdjustmentMode: "dynamic", llm: { provider: "openai", url: "", key: "", model: "gpt-4o-mini", temp: 0.3, timeout: 120000, reasoningEffort: "none", reasoningBudgetTokens: 0 }, auxLlm: { enabled: false, provider: "openai", url: "", key: "", model: "gpt-4o-mini", temp: 0.2, timeout: 90000, reasoningEffort: "none", reasoningBudgetTokens: 0 }, embed: { provider: "openai", url: "", key: "", model: "text-embedding-3-small", timeout: 120000 } };
+            _CFG = { useLLM: true, cbsEnabled: true, useLorebookRAG: true, emotionEnabled: true, illustrationModuleCompatEnabled: false, preventUserIgnoreEnabled: false, storyAuthorEnabled: true, storyAuthorMode: "proactive", directorEnabled: true, directorMode: "strong", sectionWorldInferenceEnabled: true, debug: false, memoryPreset: "general", maxLimit: MEMORY_PRESETS.general.maxLimit, threshold: MEMORY_PRESETS.general.threshold, simThreshold: MEMORY_PRESETS.general.simThreshold, gcBatchSize: MEMORY_PRESETS.general.gcBatchSize, coldStartScopePreset: "all", coldStartHistoryLimit: 0, weightMode: "auto", worldAdjustmentMode: "dynamic", llm: { provider: "openai", url: "", key: "", model: "gpt-4o-mini", temp: 0.3, timeout: 120000, reasoningEffort: "none", reasoningBudgetTokens: 0 }, auxLlm: { enabled: false, provider: "openai", url: "", key: "", model: "gpt-4o-mini", temp: 0.2, timeout: 90000, reasoningEffort: "none", reasoningBudgetTokens: 0 }, embed: { provider: "openai", url: "", key: "", model: "text-embedding-3-small", timeout: 120000 } };
             loadSettings(); toast("🔄 설정 초기화됨");
         };
 
@@ -12142,11 +12737,23 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
         overlay.querySelector('#btn-cold-start').onclick = async () => {
             if (!confirm("현재 채팅방의 과거 내역을 분석하여 메모리를 재구축하시겠습니까?")) return;
             await ColdStartManager.startAutoSummarization();
+            lore = MemoryEngine.getLorebook(char, activeChat) || lore;
+            syncGuiSnapshotsFromRuntime();
+            renderEnts();
+            renderNarrative();
+            renderWorld();
+            filterMems();
         };
 
         overlay.querySelector('#btn-cold-reanalyze').onclick = async () => {
             if (!confirm("현재 구축된 데이터와 새 재분석 결과를 원문 대화 기준으로 대조한 뒤, 더 적절한 구조 데이터로 재구축하시겠습니까?")) return;
             await ColdStartManager.reanalyzeHistoricalConversation();
+            lore = MemoryEngine.getLorebook(char, activeChat) || lore;
+            syncGuiSnapshotsFromRuntime();
+            renderEnts();
+            renderNarrative();
+            renderWorld();
+            filterMems();
         };
 
         overlay.querySelector('#btn-add-narrative').onclick = () => {
