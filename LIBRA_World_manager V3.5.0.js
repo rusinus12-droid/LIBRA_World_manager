@@ -2,7 +2,7 @@
 //@display-name LIBRA World Manager
 //@author rusinus12@gmail.com
 //@api 3.0
-//@version 3.0.0
+//@version 3.5.0
 
 (async () => {
     // ══════════════════════════════════════════════════════════════
@@ -297,6 +297,19 @@
         const top = Math.max(12, Math.round((rect.bottom || 18) + 10));
         return { left, top };
     };
+    const getDashboardAnchorInfo = () => {
+        if (typeof document !== 'undefined') {
+            const guiWrap = document.querySelector('#lmai-overlay .gui-wrap');
+            if (guiWrap instanceof HTMLElement && typeof guiWrap.getBoundingClientRect === 'function') {
+                return { mode: 'gui', rect: guiWrap.getBoundingClientRect() };
+            }
+        }
+        const button = getLibraEntryButton();
+        if (button && typeof button.getBoundingClientRect === 'function') {
+            return { mode: 'button', rect: button.getBoundingClientRect() };
+        }
+        return { mode: 'viewport', rect: null };
+    };
     const persistLoreToActiveChat = async (preferredChat, lore, opts = {}) => {
         if (!Array.isArray(lore)) return { ok: false, reason: 'invalid_lore' };
         const { saveCheckpoint = false, globalLore = undefined } = opts;
@@ -512,6 +525,7 @@
         const baseState = () => ({
             visible: false,
             status: 'idle',
+            runId: 0,
             startedAt: 0,
             updatedAt: 0,
             currentTurn: 0,
@@ -601,10 +615,21 @@
 </style>
 <div class="libra-activity-card"></div>`;
             document.body.appendChild(root);
-            const anchor = getTopLeftUiAnchorOffset();
-            root.style.left = `${anchor.left}px`;
-            root.style.top = `${anchor.top}px`;
-            root.style.right = 'auto';
+            const anchorInfo = getDashboardAnchorInfo();
+            if (anchorInfo.mode === 'gui' && anchorInfo.rect) {
+                const rect = anchorInfo.rect;
+                root.style.left = `${Math.max(12, Math.round(rect.left + ((rect.width || 0) / 2)))}px`;
+                root.style.top = `${Math.max(12, Math.round(rect.top + ((rect.height || 0) / 2)))}px`;
+                root.style.right = 'auto';
+                root.style.bottom = 'auto';
+                root.style.transform = 'translate(-50%, -50%)';
+            } else {
+                root.style.left = 'auto';
+                root.style.top = 'auto';
+                root.style.right = '18px';
+                root.style.bottom = '18px';
+                root.style.transform = 'none';
+            }
             return root;
         };
         const hide = () => {
@@ -630,8 +655,11 @@
         };
         const scheduleClose = () => {
             const state = getState();
+            const closingRunId = Number(state.runId || 0);
             if (state.closeTimer) clearTimeout(state.closeTimer);
             state.closeTimer = setTimeout(() => {
+                const latest = getState();
+                if (Number(latest.runId || 0) !== closingRunId) return;
                 hide();
                 MemoryState.activityDashboard = null;
             }, AUTO_CLOSE_MS);
@@ -641,18 +669,23 @@
             if (!state.visible) return;
             const root = ensureOverlay();
             syncLibraLauncherActivityState();
-            const anchor = getTopLeftUiAnchorOffset();
             if (root) {
-                const button = getLibraEntryButton();
-                const rect = button?.getBoundingClientRect?.();
+                const anchorInfo = getDashboardAnchorInfo();
                 const compact = typeof window !== 'undefined' && Math.min(window.innerWidth || 9999, window.innerHeight || 9999) <= 640;
-                const cardWidth = compact ? 240 : 360;
-                const rightEdge = rect?.right || (anchor.left + 78);
-                const left = Math.max(12, Math.round(rightEdge - Math.min(cardWidth, (window?.innerWidth || 9999) - 24)));
-                const top = Math.max(12, Math.round((rect?.top || anchor.top) - 6));
-                root.style.left = `${left}px`;
-                root.style.top = `${top}px`;
-                root.style.right = 'auto';
+                if (anchorInfo.mode === 'gui' && anchorInfo.rect) {
+                    const rect = anchorInfo.rect;
+                    root.style.left = `${Math.max(12, Math.round(rect.left + ((rect.width || 0) / 2)))}px`;
+                    root.style.top = `${Math.max(12, Math.round(rect.top + ((rect.height || 0) / 2)))}px`;
+                    root.style.right = 'auto';
+                    root.style.bottom = 'auto';
+                    root.style.transform = 'translate(-50%, -50%)';
+                } else {
+                    root.style.left = 'auto';
+                    root.style.top = 'auto';
+                    root.style.right = `${compact ? 12 : 18}px`;
+                    root.style.bottom = `${compact ? 12 : 18}px`;
+                    root.style.transform = 'none';
+                }
             }
             const card = root?.querySelector('.libra-activity-card');
             if (!card) return;
@@ -751,7 +784,9 @@
                 clearTimeout(state.closeTimer);
                 state.closeTimer = null;
             }
+            const nextRunId = Number(state.runId || 0) + 1;
             Object.assign(state, baseState(), {
+                runId: nextRunId,
                 visible: true,
                 status: 'preparing',
                 startedAt: now(),
@@ -763,6 +798,18 @@
                 backgroundLabel: '대기 중'
             });
             commit();
+        };
+        const reset = () => {
+            const state = getState();
+            const nextRunId = Number(state.runId || 0) + 1;
+            if (state.closeTimer) {
+                clearTimeout(state.closeTimer);
+            }
+            MemoryState.activityDashboard = {
+                ...baseState(),
+                runId: nextRunId
+            };
+            render();
         };
         const setContext = (payload = {}) => {
             const state = getState();
@@ -871,7 +918,7 @@
             commit();
             scheduleClose();
         };
-        return { beginRequest, setContext, setStage, updateQueues, recordLLM, recordEmbedding, updateBackground, complete, fail, hide, refresh };
+        return { beginRequest, setContext, setStage, updateQueues, recordLLM, recordEmbedding, updateBackground, complete, fail, hide, refresh, reset };
     })();
 
     const extractJson = (text) => {
@@ -10078,7 +10125,7 @@ const updateConfigFromArgs = async () => {
 // Initialize
 (async () => {
     try {
-        console.log('[LIBRA] v3.0.0 Initializing...');
+        console.log('[LIBRA] v3.5.0 Initializing...');
         await updateConfigFromArgs();
 
         if (typeof risuai !== 'undefined') {
@@ -10117,7 +10164,7 @@ const updateConfigFromArgs = async () => {
         TurnRecoveryEngine.startPolling();
         const activeCfg = MemoryEngine.CONFIG;
         const embedStatus = (activeCfg.embed?.url && activeCfg.embed?.key) ? `${activeCfg.embed.provider}/${activeCfg.embed.model}` : 'disabled (fallback to Jaccard)';
-        console.log(`[LIBRA] v3.0.0 Ready. LLM=${activeCfg.useLLM} | Mode=${activeCfg.weightMode} | Embed=${embedStatus}`);
+        console.log(`[LIBRA] v3.5.0 Ready. LLM=${activeCfg.useLLM} | Mode=${activeCfg.weightMode} | Embed=${embedStatus}`);
         
         // Memory Carry-Over 및 Cold Start 감지 실행
         if (typeof risuai !== 'undefined') {
@@ -10255,7 +10302,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
     const GUI_BODY = `
 <div class="gui-wrap">
 <div class="hdr">
-  <h1>📚 LIBRA World Manager <span style="font-size:0.7rem; font-weight:normal; opacity:0.5;">v3.0.0</span></h1>
+  <h1>📚 LIBRA World Manager <span style="font-size:0.7rem; font-weight:normal; opacity:0.5;">v3.5.0</span></h1>
   <div class="tabs">
     <button class="tb on" data-tab="memory">📚 메모리</button>
     <button class="tb" data-tab="entity">👤 엔티티</button>
