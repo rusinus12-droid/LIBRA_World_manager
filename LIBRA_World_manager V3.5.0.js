@@ -1806,6 +1806,27 @@ entities의 personality에는 일반 성격 특성만 기술하십시오.
                 .filter(relation => relation.entityA && relation.entityB),
             world: {
                 tech: truncateForLLM(data?.world?.tech || '', 120, ' ... '),
+                classification: {
+                    primary: truncateForLLM(data?.world?.classification?.primary || '', 80, ' ... ')
+                },
+                exists: {
+                    technology: truncateForLLM(data?.world?.exists?.technology || '', 80, ' ... '),
+                    magic: !!data?.world?.exists?.magic,
+                    ki: !!data?.world?.exists?.ki,
+                    supernatural: !!data?.world?.exists?.supernatural
+                },
+                systems: {
+                    leveling: !!data?.world?.systems?.leveling,
+                    skills: !!data?.world?.systems?.skills,
+                    stats: !!data?.world?.systems?.stats,
+                    classes: !!data?.world?.systems?.classes
+                },
+                physics: {
+                    gravity: truncateForLLM(data?.world?.physics?.gravity || '', 60, ' ... '),
+                    time_flow: truncateForLLM(data?.world?.physics?.time_flow || data?.world?.physics?.timeFlow || '', 60, ' ... '),
+                    space: truncateForLLM(data?.world?.physics?.space || '', 80, ' ... ')
+                },
+                custom: compactTextArray(Object.values(normalizeWorldCustomRules(data?.world?.custom)), 10, 220),
                 rules: compactTextArray(data?.world?.rules, 10, 220)
             }
         });
@@ -2116,6 +2137,135 @@ entities의 personality에는 일반 성격 특성만 기술하십시오.
                 ...(Array.isArray(newRules) ? newRules : [])
             ]);
         };
+        const normalizeImportedWorldStatements = (world) => {
+            const statements = [];
+            const pushStatement = (value) => {
+                const text = String(value || '')
+                    .replace(/\r/g, '\n')
+                    .split('\n')
+                    .map(line => String(line || '').replace(/^[\s\-*•·▶▷☞]+/, '').trim())
+                    .filter(Boolean);
+                for (const line of text) {
+                    const normalized = line
+                        .replace(/^[0-9]+[.)]\s*/, '')
+                        .replace(/[;；]+/g, ', ')
+                        .trim();
+                    if (normalized) statements.push(normalized);
+                }
+            };
+            pushStatement(world?.tech);
+            for (const rule of (Array.isArray(world?.rules) ? world.rules : [])) pushStatement(rule);
+            const customRules = normalizeWorldCustomRules(world?.custom);
+            for (const value of Object.values(customRules)) pushStatement(value);
+            return dedupeTextArray(statements);
+        };
+        const buildImportedWorldRuleUpdate = (world = {}, fallbackNarrative = '') => {
+            const statements = normalizeImportedWorldStatements(world);
+            const sourceText = [
+                String(world?.__genreSourceText || '').trim(),
+                String(fallbackNarrative || '').trim(),
+                statements.join('\n')
+            ].filter(Boolean).join('\n');
+            const rawTech = String(world?.tech || '').trim();
+            const normalized = {
+                classification: world?.classification && typeof world.classification === 'object'
+                    ? safeClone(world.classification)
+                    : {},
+                exists: world?.exists && typeof world.exists === 'object' && !Array.isArray(world.exists)
+                    ? safeClone(world.exists)
+                    : {},
+                systems: world?.systems && typeof world.systems === 'object' && !Array.isArray(world.systems)
+                    ? safeClone(world.systems)
+                    : {},
+                physics: world?.physics && typeof world.physics === 'object' && !Array.isArray(world.physics)
+                    ? safeClone(world.physics)
+                    : {},
+                custom: normalizeWorldCustomRules(world?.custom),
+                __genreSourceText: sourceText
+            };
+
+            const lowerText = sourceText.toLowerCase();
+            const lowerTech = rawTech.toLowerCase();
+            const hasModernSignal = /(대한민국|한국|서울|현대|동시대|스마트폰|휴대폰|sns|소셜 미디어|감시 시스템|아이돌|연습생|고등학생|학교|소속사|연예계|modern|contemporary|present day|smartphone|social media|surveillance|idol|trainee)/i.test(sourceText);
+            const hasFutureSignal = /(미래|우주|은하|행성|안드로이드|로봇|사이버|네온|임플란트|증강현실|sf|sci-fi|futur|space|cyber|android|robot|implant|augmented reality)/i.test(sourceText);
+            const hasMedievalSignal = /(중세|봉건|왕국|제국|귀족|황궁|기사단|검과 마법|medieval|feudal|kingdom|empire|nobility)/i.test(sourceText);
+            if (lowerTech) {
+                normalized.exists.technology = rawTech;
+            } else if (hasFutureSignal) {
+                normalized.exists.technology = 'futuristic';
+            } else if (hasMedievalSignal) {
+                normalized.exists.technology = 'medieval';
+            } else if (hasModernSignal) {
+                normalized.exists.technology = 'modern';
+            }
+
+            if (/(마법|마나|마력|오라|주술|비전|정령|소환|arcane|magic|mana|aura|sorcery|spell|summon)/i.test(sourceText)) {
+                normalized.exists.magic = true;
+                normalized.exists.supernatural = true;
+            }
+            if (/(기\(氣\)|기운|내공|심법|단전|qi|chi|cultivation|dantian|inner energy)/i.test(sourceText)) {
+                normalized.exists.ki = true;
+                normalized.exists.supernatural = true;
+            }
+            if (/(초자연|유령|귀신|악령|괴담|초능력|빙의|supernatural|ghost|spirit|haunting|paranormal|superpower|possession)/i.test(sourceText)) {
+                normalized.exists.supernatural = true;
+            }
+            if (/(레벨|상태창|퀘스트|인벤토리|직업|클래스|레벨링|level|status window|quest|inventory|class|leveling)/i.test(sourceText)) {
+                normalized.systems.leveling = true;
+                normalized.systems.classes = true;
+            }
+            if (/(스킬|기술 트리|skill|skills)/i.test(sourceText)) {
+                normalized.systems.skills = true;
+            }
+            if (/(스탯|능력치|stats|stat points)/i.test(sourceText)) {
+                normalized.systems.stats = true;
+            }
+            if (/(길드|guild)/i.test(sourceText)) normalized.systems.guilds = true;
+            if (/(세력|파벌|faction|factions)/i.test(sourceText)) normalized.systems.factions = true;
+
+            for (const statement of statements) {
+                if (!statement) continue;
+                if (/^(일반|normal|보통)$/i.test(statement)) {
+                    normalized.physics.gravity = normalized.physics.gravity || 'normal';
+                    continue;
+                }
+                if (/(선형적|선형|linear)/i.test(statement)) {
+                    normalized.physics.time_flow = 'linear';
+                    continue;
+                }
+                if (/(비선형|nonlinear|non-linear)/i.test(statement)) {
+                    normalized.physics.time_flow = 'nonlinear';
+                    continue;
+                }
+                if (/(3차원|삼차원|three[-_\s]?dimensional)/i.test(statement)) {
+                    normalized.physics.space = 'three_dimensional';
+                    continue;
+                }
+                if (/(2차원|이차원|two[-_\s]?dimensional)/i.test(statement)) {
+                    normalized.physics.space = 'two_dimensional';
+                    continue;
+                }
+                if (/(4차원|사차원|four[-_\s]?dimensional)/i.test(statement)) {
+                    normalized.physics.space = 'four_dimensional';
+                    continue;
+                }
+                if (/(저중력|low gravity)/i.test(statement)) {
+                    normalized.physics.gravity = 'low';
+                    continue;
+                }
+                if (/(고중력|high gravity)/i.test(statement)) {
+                    normalized.physics.gravity = 'high';
+                    continue;
+                }
+                const currentCustom = normalizeWorldCustomRules(normalized.custom);
+                normalized.custom = {
+                    ...currentCustom,
+                    [`rule_${Object.keys(currentCustom).length + 1}`]: statement
+                };
+            }
+
+            return normalizeWorldRuleUpdate(normalized);
+        };
         const normalizeNarrativeStorylinesForMerge = (storylines, fallbackNarrative = '') => {
             const source = Array.isArray(storylines) ? storylines : [];
             const normalized = source.map((storyline, idx) => ({
@@ -2312,7 +2462,24 @@ entities의 personality에는 일반 성격 특성만 기술하십시오.
             relations: dedupeRelationsForMerge(finalData?.relations),
             world: {
                 tech: String(finalData?.world?.tech || '').trim(),
-                rules: dedupeTextArray(finalData?.world?.rules)
+                classification: finalData?.world?.classification && typeof finalData.world.classification === 'object'
+                    ? safeClone(finalData.world.classification)
+                    : {},
+                exists: finalData?.world?.exists && typeof finalData.world.exists === 'object' && !Array.isArray(finalData.world.exists)
+                    ? safeClone(finalData.world.exists)
+                    : {},
+                systems: finalData?.world?.systems && typeof finalData.world.systems === 'object' && !Array.isArray(finalData.world.systems)
+                    ? safeClone(finalData.world.systems)
+                    : {},
+                physics: finalData?.world?.physics && typeof finalData.world.physics === 'object' && !Array.isArray(finalData.world.physics)
+                    ? safeClone(finalData.world.physics)
+                    : {},
+                custom: normalizeWorldCustomRules(finalData?.world?.custom),
+                __genreSourceText: String(finalData?.world?.__genreSourceText || '').trim(),
+                rules: dedupeTextArray([
+                    ...(Array.isArray(finalData?.world?.rules) ? finalData.world.rules : []),
+                    ...Object.values(normalizeWorldCustomRules(finalData?.world?.custom))
+                ])
             }
         });
         const buildImportedKnowledgeSignalText = (sanitized) => {
@@ -2468,14 +2635,8 @@ entities의 personality에는 일반 성격 특성만 기술하십시오.
                 const profile = HierarchicalWorldManager.getProfile();
                 const rootNode = profile?.nodes?.get(profile?.rootId);
                 if (rootNode && sanitized.world) {
-                    const techValue = String(sanitized.world.tech || '').trim();
-                    if (techValue && !/^(unknown|none|n\/a)$/i.test(techValue)) {
-                        rootNode.rules.exists.technology = techValue;
-                    }
-                    rootNode.rules.physics.special_phenomena = dedupeWorldRulesForMerge(
-                        rootNode.rules?.physics?.special_phenomena,
-                        sanitized.world.rules
-                    );
+                    const worldRuleUpdate = buildImportedWorldRuleUpdate(sanitized.world, sanitized.narrative || '');
+                    HierarchicalWorldManager.updateNode(rootNode.id, { rules: worldRuleUpdate });
                     rootNode.meta.notes = opts.worldNote;
                     rootNode.meta.s_id = opts.sourceId;
                 }
@@ -2607,6 +2768,7 @@ entities의 personality에는 일반 성격 특성만 기술하십시오.
             }));
             const profile = HierarchicalWorldManager.getProfile();
             const rootNode = profile?.nodes?.get(profile?.rootId);
+            const rootRules = rootNode?.rules || {};
             return sanitizeStructuredKnowledge({
                 narrative,
                 narrativeDetails: {
@@ -2621,8 +2783,16 @@ entities의 personality에는 일반 성격 특성만 기술하십시오.
                 entities,
                 relations,
                 world: {
-                    tech: rootNode?.rules?.exists?.technology || '',
-                    rules: rootNode?.rules?.physics?.special_phenomena || []
+                    tech: rootRules?.exists?.technology || '',
+                    classification: { primary: inferWorldClassificationLabel(rootRules, '') },
+                    exists: safeClone(rootRules?.exists || {}),
+                    systems: safeClone(rootRules?.systems || {}),
+                    physics: safeClone(rootRules?.physics || {}),
+                    custom: safeClone(rootRules?.custom || {}),
+                    rules: [
+                        ...(Array.isArray(rootRules?.physics?.special_phenomena) ? rootRules.physics.special_phenomena : []),
+                        ...Object.values(normalizeWorldCustomRules(rootRules?.custom || {}))
+                    ]
                 }
             });
         };
@@ -2751,11 +2921,8 @@ entities의 personality에는 일반 성격 특성만 기술하십시오.
                 const profile = HierarchicalWorldManager.getProfile();
                 const rootNode = profile?.nodes?.get(profile?.rootId);
                 if (rootNode) {
-                    rootNode.rules = rootNode.rules || { exists: {}, systems: {}, physics: {}, custom: {} };
-                    rootNode.rules.exists = rootNode.rules.exists || {};
-                    rootNode.rules.physics = rootNode.rules.physics || {};
-                    rootNode.rules.exists.technology = String(sanitized.world?.tech || '').trim();
-                    rootNode.rules.physics.special_phenomena = [...(sanitized.world?.rules || [])];
+                    const worldRuleUpdate = buildImportedWorldRuleUpdate(sanitized.world, sanitized.narrative || '');
+                    HierarchicalWorldManager.updateNode(rootNode.id, { rules: worldRuleUpdate });
                     rootNode.meta.notes = opts.worldNote;
                     rootNode.meta.s_id = opts.sourceId;
                 }
@@ -11842,7 +12009,13 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
                 const custom = Array.isArray(effectiveRules.custom)
                     ? effectiveRules.custom.map(v => String(v || '').trim()).filter(Boolean)
                     : (effectiveRules.custom && typeof effectiveRules.custom === 'object')
-                        ? Object.entries(effectiveRules.custom).map(([key, value]) => `${key}: ${String(value || '').trim()}`).filter(Boolean)
+                        ? Object.entries(effectiveRules.custom)
+                            .map(([key, value]) => {
+                                const normalizedValue = String(value || '').trim();
+                                if (!normalizedValue) return '';
+                                return /^rule_\d+$/i.test(String(key || '').trim()) ? normalizedValue : `${key}: ${normalizedValue}`;
+                            })
+                            .filter(Boolean)
                         : [];
                 const lines = [];
 
