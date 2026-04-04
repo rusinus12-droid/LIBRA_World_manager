@@ -2,7 +2,7 @@
 //@display-name LIBRA World Manager
 //@author rusinus12@gmail.com
 //@api 3.0
-//@version 3.5.1
+//@version 3.5.1a
 
 (async () => {
     // ══════════════════════════════════════════════════════════════
@@ -618,8 +618,137 @@
         if (typeof document === 'undefined') return null;
         return { mode: 'body', host: document.body };
     };
+    let dashboardAutoShowBound = false;
+    let dashboardAutoShowLastPrimedAt = 0;
+    let dashboardAutoShowPollTimer = null;
+    let dashboardAutoShowLastSignature = '';
+    const DASHBOARD_AUTOSHOW_PRIME_WINDOW_MS = 4000;
+    const looksLikeChatSubmitTarget = (target) => {
+        const element = target instanceof Element ? target : null;
+        if (!element) return false;
+        const text = [
+            element.getAttribute?.('aria-label') || '',
+            element.getAttribute?.('title') || '',
+            element.getAttribute?.('data-testid') || '',
+            element.getAttribute?.('id') || '',
+            element.getAttribute?.('class') || '',
+            element.textContent || ''
+        ].join(' ').toLowerCase();
+        return /(send|submit|전송|보내기|chat-send|message-send|input-send)/i.test(text);
+    };
+    const isUserTextEntryElement = (target) => {
+        const element = target instanceof Element ? target : null;
+        if (!element) return false;
+        if (element.closest?.('#lmai-overlay')) return false;
+        const tag = String(element.tagName || '').toLowerCase();
+        const type = String(element.getAttribute?.('type') || 'text').toLowerCase();
+        return !!(element.isContentEditable || tag === 'textarea' || (tag === 'input' && /^(text|search|url|email|tel|password)?$/i.test(type)));
+    };
+    const readElementInputText = (target) => {
+        const element = target instanceof Element ? target : null;
+        if (!element) return '';
+        if (typeof element.value === 'string') return element.value;
+        if (element.isContentEditable) return element.textContent || '';
+        return '';
+    };
+    const primeDashboardForUserDraft = (stageLabel = '대화 입력 준비 중') => {
+        dashboardAutoShowLastPrimedAt = Date.now();
+        try {
+            LIBRAActivityDashboard.beginRequest({
+                requestType: 'user-draft',
+                stageLabel
+            });
+        } catch {}
+    };
+    const shouldPrimeDashboardForUserInput = (eventTarget) => {
+        if (typeof document === 'undefined') return false;
+        if (document.getElementById('lmai-overlay')) return false;
+        const active = document.activeElement;
+        const element = eventTarget instanceof Element ? eventTarget : active;
+        if (!element) return false;
+        if (element.closest?.('#lmai-overlay')) return false;
+        const editable = isUserTextEntryElement(element);
+        return editable || looksLikeChatSubmitTarget(element) || looksLikeChatSubmitTarget(element.closest?.('button,[role=\"button\"]'));
+    };
+    const getDashboardDraftCandidate = () => {
+        if (typeof document === 'undefined') return { element: null, text: '', signature: '' };
+        const candidates = [];
+        const active = document.activeElement instanceof Element ? document.activeElement : null;
+        if (active) candidates.push(active);
+        if (document.querySelectorAll) {
+            document.querySelectorAll('textarea,input[type="text"],input:not([type]),[contenteditable=""],[contenteditable="true"]').forEach((el) => {
+                if (el instanceof Element) candidates.push(el);
+            });
+        }
+        for (const element of candidates) {
+            if (!isUserTextEntryElement(element)) continue;
+            const text = String(readElementInputText(element) || '').trim();
+            if (!text) continue;
+            const signature = `${String(element.tagName || '').toLowerCase()}::${element.getAttribute?.('id') || ''}::${text}`;
+            return { element, text, signature };
+        }
+        return { element: null, text: '', signature: '' };
+    };
+    const bindDashboardAutoShow = () => {
+        if (dashboardAutoShowBound || typeof document === 'undefined') return;
+        dashboardAutoShowBound = true;
+        document.addEventListener('input', (event) => {
+            const target = event.target instanceof Element ? event.target : null;
+            if (!isUserTextEntryElement(target)) return;
+            const text = String(readElementInputText(target) || '').trim();
+            if (!text) return;
+            primeDashboardForUserDraft('대화 입력 준비 중');
+        }, true);
+        document.addEventListener('keydown', (event) => {
+            if (event.defaultPrevented) return;
+            if (event.key !== 'Enter' || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return;
+            if (!shouldPrimeDashboardForUserInput(event.target)) return;
+            try {
+                LIBRAActivityDashboard.beginRequest({
+                    requestType: 'user-input',
+                    stageLabel: '대화 요청 전송 중'
+                });
+            } catch {}
+        }, true);
+        document.addEventListener('click', (event) => {
+            if (!shouldPrimeDashboardForUserInput(event.target)) return;
+            const target = event.target instanceof Element ? event.target : null;
+            if (!looksLikeChatSubmitTarget(target) && !looksLikeChatSubmitTarget(target?.closest?.('button,[role=\"button\"]'))) return;
+            const recentlyPrimed = (Date.now() - dashboardAutoShowLastPrimedAt) <= DASHBOARD_AUTOSHOW_PRIME_WINDOW_MS;
+            if (!recentlyPrimed) {
+                primeDashboardForUserDraft('대화 입력 준비 중');
+            }
+            try {
+                LIBRAActivityDashboard.beginRequest({
+                    requestType: 'user-input',
+                    stageLabel: '대화 요청 전송 중'
+                });
+            } catch {}
+        }, true);
+        document.addEventListener('submit', (event) => {
+            if (!shouldPrimeDashboardForUserInput(event.target)) return;
+            try {
+                LIBRAActivityDashboard.beginRequest({
+                    requestType: 'user-input',
+                    stageLabel: '대화 요청 전송 중'
+                });
+            } catch {}
+        }, true);
+        if (typeof setInterval === 'function') {
+            dashboardAutoShowPollTimer = setInterval(() => {
+                const candidate = getDashboardDraftCandidate();
+                if (!candidate.signature) {
+                    dashboardAutoShowLastSignature = '';
+                    return;
+                }
+                if (candidate.signature === dashboardAutoShowLastSignature) return;
+                dashboardAutoShowLastSignature = candidate.signature;
+                primeDashboardForUserDraft('대화 입력 준비 중');
+            }, 450);
+        }
+    };
     const LIGHTBOARD_PERSIST_DELAY_MS = 3000;
-    const LIGHTBOARD_PERSIST_MAX_RETRIES = 100;
+    const LIGHTBOARD_PERSIST_MAX_RETRIES = 5;
     const persistLoreToActiveChat = async (preferredChat, lore, opts = {}) => {
         if (!Array.isArray(lore)) return { ok: false, reason: 'invalid_lore' };
         const { saveCheckpoint = false, globalLore = undefined } = opts;
@@ -670,7 +799,7 @@
         
         nextChar.chats = Array.isArray(nextChar.chats) ? nextChar.chats : [];
         nextChar.chats[chatIndex] = nextChat;
-        await risuai.setCharacter(nextChar);
+        await risuai.setCharacter(safeClone(nextChar));
 
         if (saveCheckpoint) {
             await RefreshCheckpointManager.saveCheckpoint(nextChar, nextChat, lore);
@@ -827,6 +956,53 @@
     const BackgroundMaintenanceQueue = new AsyncTaskQueue(1, 'BackgroundMaintenanceQueue');
     const runMaintenanceLLM = (task, name = 'maintenance-llm') => MaintenanceLLMQueue.enqueue(task, name);
 
+    const toSerializableClone = (value, seen = new WeakMap()) => {
+        if (value == null) return value;
+        const valueType = typeof value;
+        if (valueType === 'string' || valueType === 'number' || valueType === 'boolean') return value;
+        if (valueType === 'bigint') return Number(value);
+        if (valueType === 'undefined' || valueType === 'function' || valueType === 'symbol') return undefined;
+        if (seen.has(value)) return seen.get(value);
+        if (value instanceof Date) return new Date(value.getTime()).toISOString();
+        if (value instanceof RegExp) return String(value);
+        if (Array.isArray(value)) {
+            const arr = [];
+            seen.set(value, arr);
+            for (const item of value) {
+                const cloned = toSerializableClone(item, seen);
+                arr.push(cloned === undefined ? null : cloned);
+            }
+            return arr;
+        }
+        if (value instanceof Map) {
+            const obj = {};
+            seen.set(value, obj);
+            for (const [entryKey, entryValue] of value.entries()) {
+                const key = String(entryKey ?? '');
+                const cloned = toSerializableClone(entryValue, seen);
+                if (cloned !== undefined) obj[key] = cloned;
+            }
+            return obj;
+        }
+        if (value instanceof Set) {
+            const arr = [];
+            seen.set(value, arr);
+            for (const entryValue of value.values()) {
+                const cloned = toSerializableClone(entryValue, seen);
+                if (cloned !== undefined) arr.push(cloned);
+            }
+            return arr;
+        }
+        const tag = Object.prototype.toString.call(value);
+        if (/\[object (Window|HTML.+Element|Document|Event|MessagePort)\]/.test(tag)) return undefined;
+        const output = {};
+        seen.set(value, output);
+        for (const key of Object.keys(value)) {
+            const cloned = toSerializableClone(value[key], seen);
+            if (cloned !== undefined) output[key] = cloned;
+        }
+        return output;
+    };
     const safeClone = (value) => {
         if (value == null || typeof value !== 'object') return value;
         try {
@@ -836,9 +1012,9 @@
                 return JSON.parse(JSON.stringify(value));
             } catch (jsonError) {
                 if (isLibraDebugEnabled()) {
-                    console.warn('[LIBRA] safeClone failed; returning original reference', cloneError?.message || cloneError, jsonError?.message || jsonError);
+                    console.warn('[LIBRA] safeClone fallback to serializable clone', cloneError?.message || cloneError, jsonError?.message || jsonError);
                 }
-                return value;
+                return toSerializableClone(value);
             }
         }
     };
@@ -849,6 +1025,14 @@
             return value.map(item => safeClone(item));
         }
         return { ...value };
+    };
+    const requestPluginContainerVisible = () => {
+        try {
+            const R = (typeof Risuai !== 'undefined') ? Risuai : (typeof risuai !== 'undefined' ? risuai : null);
+            if (R && typeof R.showContainer === 'function') {
+                Promise.resolve(R.showContainer()).catch(() => {});
+            }
+        } catch {}
     };
     const LIBRAActivityDashboard = (() => {
         const OVERLAY_ID = 'libra-activity-overlay';
@@ -897,6 +1081,7 @@
             .replace(/'/g, '&#39;');
         const ensureOverlay = () => {
             if (typeof document === 'undefined') return null;
+        requestPluginContainerVisible();
         let root = document.getElementById(OVERLAY_ID);
         const hostInfo = getDashboardHost();
         if (root) {
@@ -1093,6 +1278,7 @@
         };
         const beginRequest = (payload = {}) => {
             const state = getState();
+            requestPluginContainerVisible();
             if (state.closeTimer) {
                 clearTimeout(state.closeTimer);
                 state.closeTimer = null;
@@ -3960,7 +4146,7 @@ Return JSON only.${STRICT_JSON_OUTPUT_RULES}`;
                         }
                     }));
 
-                    await risuai.setCharacter(nextChar);
+                    await risuai.setCharacter(safeClone(nextChar));
 
                     // 4. 세션 추적 갱신
                     const newScopeKey = getChatRuntimeScopeKey(newChat, nextChar);
@@ -4269,16 +4455,6 @@ Return JSON only.${STRICT_JSON_OUTPUT_RULES}`;
                 }
 
                 if ((now - transient.since) < TRANSIENT_MISSING_GRACE_MS) {
-                    continue;
-                }
-
-                // LightBoard 직후: 매칭 안 되는 ID는 롤백 대신 트래커에서 제거
-                if (lbJustFinished) {
-                    MemoryState.rollbackTracker.delete(id);
-                    MemoryState.transientMissing.delete(id);
-                    if (MemoryEngine.CONFIG.debug) {
-                        console.log(`[LIBRA] syncMemory post-LightBoard: orphaned tracker ${id} cleaned (not rolled back)`);
-                    }
                     continue;
                 }
 
@@ -5242,6 +5418,82 @@ Return JSON only.${STRICT_JSON_OUTPUT_RULES}`;
     const DEFAULT_REASONING_BUDGET_TOKENS = 0;
     const DEFAULT_MAX_COMPLETION_TOKENS = 16000;
     const DEFAULT_AUX_MAX_COMPLETION_TOKENS = 12000;
+    const REASONING_PRESETS = {
+        auto: {
+            label: '자동 감지',
+            reasoningEffort: 'none',
+            reasoningBudgetTokens: DEFAULT_REASONING_BUDGET_TOKENS,
+            maxCompletionTokens: DEFAULT_MAX_COMPLETION_TOKENS,
+            glmThinkingType: 'enabled',
+            hint: '모델/URL을 보고 GPT, Gemini, Claude, GLM 계열을 자동 판단합니다.'
+        },
+        gpt: {
+            label: 'GPT',
+            reasoningEffort: 'medium',
+            reasoningBudgetTokens: 0,
+            maxCompletionTokens: 20000,
+            glmThinkingType: 'disabled',
+            hint: 'GPT 계열은 Reasoning Effort와 Max Completion Tokens를 주로 사용합니다.'
+        },
+        gemini: {
+            label: 'Gemini',
+            reasoningEffort: 'none',
+            reasoningBudgetTokens: 8192,
+            maxCompletionTokens: 20000,
+            glmThinkingType: 'disabled',
+            hint: 'Gemini 계열은 Thinking Budget과 Max Completion Tokens를 주로 사용합니다.'
+        },
+        claude: {
+            label: 'Claude',
+            reasoningEffort: 'none',
+            reasoningBudgetTokens: 4096,
+            maxCompletionTokens: 20000,
+            glmThinkingType: 'disabled',
+            hint: 'Claude 계열은 Thinking Budget으로 추론을 켜고, Max Completion Tokens를 넉넉히 잡는 편이 좋습니다.'
+        },
+        glm: {
+            label: 'GLM',
+            reasoningEffort: 'none',
+            reasoningBudgetTokens: 0,
+            maxCompletionTokens: 24000,
+            glmThinkingType: 'enabled',
+            hint: 'GLM 계열은 Zhipu 공식 thinking.type을 사용합니다. 현재 LIBRA에서는 enabled/disabled를 직접 조정합니다.'
+        },
+        custom: {
+            label: '커스텀',
+            reasoningEffort: 'none',
+            reasoningBudgetTokens: DEFAULT_REASONING_BUDGET_TOKENS,
+            maxCompletionTokens: DEFAULT_MAX_COMPLETION_TOKENS,
+            glmThinkingType: 'disabled',
+            hint: '모든 추론 항목을 직접 조정합니다.'
+        }
+    };
+    const isGLMLikeConfig = (llmConfig = {}) => {
+        const model = String(llmConfig?.model || '').trim().toLowerCase();
+        const url = String(llmConfig?.url || '').trim().toLowerCase();
+        const provider = String(llmConfig?.provider || '').trim().toLowerCase();
+        return /^glm[-\d.]/i.test(model)
+            || /(?:open\.)?bigmodel\.cn|zhipu/i.test(url)
+            || (provider === 'custom' && /^glm/i.test(model));
+    };
+    const detectReasoningFamily = (llmConfig = {}) => {
+        if (isGLMLikeConfig(llmConfig)) return 'glm';
+        const provider = String(llmConfig?.provider || '').trim().toLowerCase();
+        if (provider === 'claude') return 'claude';
+        if (provider === 'gemini' || provider === 'vertex') return 'gemini';
+        return 'gpt';
+    };
+    const getEffectiveReasoningPresetKey = (llmConfig = {}) => {
+        const requested = String(llmConfig?.reasoningPreset || 'auto').trim().toLowerCase();
+        if (requested && requested !== 'auto' && REASONING_PRESETS[requested]) return requested;
+        return detectReasoningFamily(llmConfig);
+    };
+    const getEffectiveReasoningRuntimeFamily = (llmConfig = {}) => {
+        const requested = String(llmConfig?.reasoningPreset || 'auto').trim().toLowerCase();
+        if (requested === 'gpt' || requested === 'gemini' || requested === 'claude' || requested === 'glm') return requested;
+        return detectReasoningFamily(llmConfig);
+    };
+    const getReasoningPresetDefinition = (presetKey = 'auto') => REASONING_PRESETS[String(presetKey || 'auto').trim().toLowerCase()] || REASONING_PRESETS.auto;
     class BaseProvider {
         async callLLM(config, systemPrompt, userContent, options) { throw new Error('Not implemented'); }
         async getEmbedding(config, text) { throw new Error('Not implemented'); }
@@ -5398,7 +5650,7 @@ Return JSON only.${STRICT_JSON_OUTPUT_RULES}`;
         async callLLM(config, systemPrompt, userContent, options) {
             this._checkKey(config.llm.key);
             const provider = (config.llm.provider || 'openai').toLowerCase();
-            const endpointSuffix = provider === 'copilot' ? '/chat/completions' : '/v1/chat/completions';
+            const endpointSuffix = provider === 'copilot' || isGLMLikeConfig(config.llm) ? '/chat/completions' : '/v1/chat/completions';
             const url = this._normalizeUrl(resolveProviderBaseUrl(provider, config.llm.url, 'llm'), endpointSuffix);
             const authToken = provider === 'copilot'
                 ? await this._getCopilotBearerToken(config.llm.key)
@@ -5429,6 +5681,7 @@ Return JSON only.${STRICT_JSON_OUTPUT_RULES}`;
 
             const requestedTokens = options.maxTokens || 1000;
             const configuredMaxCompletionTokens = Math.max(0, parseInt(config.llm.maxCompletionTokens, 10) || 0);
+            const reasoningPresetKey = getEffectiveReasoningRuntimeFamily(config.llm);
             const body = {
                 model: modelName,
                 messages: [
@@ -5438,7 +5691,12 @@ Return JSON only.${STRICT_JSON_OUTPUT_RULES}`;
                 temperature: config.llm.temp || 0.3,
                 max_tokens: requestedTokens
             };
-            if (config.llm.reasoningEffort && config.llm.reasoningEffort !== 'none') {
+            if (reasoningPresetKey === 'glm') {
+                body.max_tokens = Math.max(requestedTokens, configuredMaxCompletionTokens || DEFAULT_MAX_COMPLETION_TOKENS);
+                body.thinking = {
+                    type: String(config.llm.glmThinkingType || 'enabled').toLowerCase() === 'disabled' ? 'disabled' : 'enabled'
+                };
+            } else if (config.llm.reasoningEffort && config.llm.reasoningEffort !== 'none') {
                 body.reasoning_effort = config.llm.reasoningEffort;
                 body.max_completion_tokens = Math.max(requestedTokens, configuredMaxCompletionTokens || DEFAULT_MAX_COMPLETION_TOKENS);
                 delete body.max_tokens;
@@ -6510,11 +6768,9 @@ Return JSON only.${STRICT_JSON_OUTPUT_RULES}`;
             userAliases: new Set(['user', '사용자', 'you', 'me', '나', '본인'])
         };
 
-        const normalizeBaseName = (name) => {
-            if (!name) return '';
+        const stripNameTitles = (name) => {
             let normalized = String(name || '')
                 .replace(/[“”"'`‘’]/g, '')
-                .replace(/\([^)]*\)/g, ' ')
                 .replace(/\[[^\]]*\]/g, ' ')
                 .replace(/\s+/g, ' ')
                 .trim();
@@ -6539,10 +6795,61 @@ Return JSON only.${STRICT_JSON_OUTPUT_RULES}`;
             return normalized.trim();
         };
 
+        const extractBilingualNameParts = (name) => {
+            const raw = String(name || '').replace(/[“”"'`‘’]/g, '').trim();
+            const match = raw.match(/^([^()[\]]+?)\s*\(([^()]+?)\)\s*$/);
+            if (!match) return null;
+            const primary = stripNameTitles(match[1]).trim();
+            const secondary = stripNameTitles(match[2]).trim();
+            if (!primary || !secondary) return null;
+            return { primary, secondary };
+        };
+
+        const normalizeCanonicalDisplayName = (name) => {
+            const bilingual = extractBilingualNameParts(name);
+            if (bilingual) return `${bilingual.primary}(${bilingual.secondary})`;
+            return stripNameTitles(String(name || '')).replace(/\([^)]*\)/g, ' ').replace(/\s+/g, ' ').trim();
+        };
+
+        const splitNameVariants = (value) => String(value || '')
+            .split(/\s*\/\s*|\s*\|\s*|\s*;\s*|\s*,\s*|\s*[·・]\s*/)
+            .map(part => stripNameTitles(part).trim())
+            .filter(Boolean);
+
+        const extractNameVariantParts = (name) => {
+            const variants = new Set();
+            const canonical = normalizeCanonicalDisplayName(name);
+            if (canonical) variants.add(canonical);
+            const bilingual = extractBilingualNameParts(name);
+            if (bilingual) {
+                variants.add(bilingual.primary);
+                variants.add(bilingual.secondary);
+                splitNameVariants(bilingual.primary).forEach(part => variants.add(part));
+                splitNameVariants(bilingual.secondary).forEach(part => variants.add(part));
+            }
+            splitNameVariants(String(name || '').replace(/[()]/g, ' ')).forEach(part => variants.add(part));
+            return [...variants].filter(Boolean);
+        };
+
+        const normalizeBaseName = (name) => {
+            if (!name) return '';
+            const bilingual = extractBilingualNameParts(name);
+            if (bilingual) {
+                return bilingual.primary;
+            }
+            return normalizeCanonicalDisplayName(name);
+        };
+
         const getKoreanShortName = (name) => {
             const base = normalizeBaseName(name);
             if (!/^[가-힣]{3,4}$/.test(base)) return '';
             return base.slice(-2);
+        };
+
+        const getKoreanFamilyName = (name) => {
+            const base = normalizeBaseName(name);
+            if (!/^[가-힣]{3,4}$/.test(base)) return '';
+            return base.slice(0, 1);
         };
 
         const getEnglishOrJapaneseNameParts = (name) => {
@@ -6558,11 +6865,61 @@ Return JSON only.${STRICT_JSON_OUTPUT_RULES}`;
             return [];
         };
 
+        const getNameTokenSignatures = (name) => {
+            const parts = getEnglishOrJapaneseNameParts(name)
+                .map(part => normalizeBaseName(part).toLowerCase())
+                .filter(Boolean);
+            if (parts.length < 2) return [];
+            const signatures = new Set();
+            signatures.add(parts.join(' '));
+            signatures.add(parts.join(''));
+            signatures.add(`${parts[0]} ${parts[parts.length - 1]}`);
+            signatures.add(`${parts[parts.length - 1]} ${parts[0]}`);
+            signatures.add(`${parts[0]}${parts[parts.length - 1]}`);
+            signatures.add(`${parts[parts.length - 1]}${parts[0]}`);
+            return [...signatures].filter(Boolean);
+        };
+
+        const buildHiddenNameKeys = (name) => {
+            const keys = new Set();
+            const canonical = normalizeCanonicalDisplayName(name);
+            const base = normalizeBaseName(name);
+            const family = getKoreanFamilyName(name);
+            const shortKo = getKoreanShortName(name);
+            const addKey = (value) => {
+                const normalized = String(value || '').trim().toLowerCase();
+                if (!normalized) return;
+                keys.add(normalized);
+                keys.add(normalized.replace(/\s+/g, ''));
+            };
+            addKey(canonical);
+            addKey(base);
+            extractNameVariantParts(name).forEach(addKey);
+            getNameTokenSignatures(name).forEach(addKey);
+            if (family && shortKo) {
+                addKey(`${family}:${shortKo}`);
+                addKey(`${family}${shortKo}`);
+            }
+            return [...keys].filter(Boolean);
+        };
+
         const buildAliasCandidates = (name, includeShortKorean = true) => {
             const base = normalizeBaseName(name);
-            if (!base) return [];
-            const compact = base.replace(/\s+/g, '');
-            const aliases = new Set([base, compact, base.toLowerCase(), compact.toLowerCase()]);
+            const canonical = normalizeCanonicalDisplayName(name);
+            if (!base && !canonical) return [];
+            const aliases = new Set();
+            const pushAlias = (value) => {
+                const normalized = String(value || '').trim();
+                if (!normalized) return;
+                const compact = normalized.replace(/\s+/g, '');
+                aliases.add(normalized);
+                aliases.add(compact);
+                aliases.add(normalized.toLowerCase());
+                aliases.add(compact.toLowerCase());
+            };
+            pushAlias(base);
+            pushAlias(canonical);
+            extractNameVariantParts(name).forEach(pushAlias);
             if (includeShortKorean) {
                 const shortKo = getKoreanShortName(base);
                 if (shortKo) {
@@ -6595,12 +6952,15 @@ Return JSON only.${STRICT_JSON_OUTPUT_RULES}`;
         const extractEntityAliases = (entity) => {
             const aliases = new Set();
             buildAliasCandidates(entity?.name || '', true).forEach(alias => aliases.add(alias));
-            for (const part of getEnglishOrJapaneseNameParts(entity?.name || '')) {
-                buildAliasCandidates(part, false).forEach(alias => aliases.add(alias));
-            }
+            getNameTokenSignatures(entity?.name || '').forEach(alias => aliases.add(alias));
             const metaAliases = Array.isArray(entity?.meta?.aliases) ? entity.meta.aliases : [];
             for (const alias of metaAliases) {
                 buildAliasCandidates(alias, true).forEach(candidate => aliases.add(candidate));
+            }
+            const hiddenKeys = Array.isArray(entity?.meta?.hiddenNameKeys) ? entity.meta.hiddenNameKeys : [];
+            for (const key of hiddenKeys) {
+                const normalized = String(key || '').trim();
+                if (normalized) aliases.add(normalized);
             }
             return [...aliases].filter(Boolean);
         };
@@ -6632,22 +6992,39 @@ Return JSON only.${STRICT_JSON_OUTPUT_RULES}`;
             if (isUserAlias(base)) return identityState.userCanonical || base;
 
             const incomingAliases = new Set(buildAliasCandidates(base, true));
+            buildHiddenNameKeys(name).forEach(key => incomingAliases.add(key));
             const knownEntities = collectKnownEntities(lorebook);
             const exactAliasMatch = knownEntities.find(entity => {
                 const entityAliases = extractEntityAliases(entity);
                 return entityAliases.some(alias => incomingAliases.has(alias));
             });
             if (exactAliasMatch?.name) {
-                return normalizeBaseName(exactAliasMatch.name);
+                return normalizeCanonicalDisplayName(exactAliasMatch.name);
             }
 
             const shortKo = getKoreanShortName(base) || (/^[가-힣]{2}$/.test(base) ? base : '');
             if (shortKo) {
-                const matches = knownEntities
-                    .map(entity => normalizeBaseName(entity?.name || ''))
-                    .filter(entityName => /^[가-힣]{3,4}$/.test(entityName) && entityName.endsWith(shortKo));
-                const uniqueMatches = [...new Set(matches)];
-                if (uniqueMatches.length === 1) return uniqueMatches[0];
+                const incomingFamilyName = getKoreanFamilyName(name);
+                const candidates = knownEntities
+                    .map(entity => normalizeCanonicalDisplayName(entity?.name || ''))
+                    .filter(Boolean)
+                    .map(entityName => ({
+                        displayName: entityName,
+                        baseName: normalizeBaseName(entityName),
+                        familyName: getKoreanFamilyName(entityName)
+                    }))
+                    .filter(entity => /^[가-힣]{3,4}$/.test(entity.baseName) && entity.baseName.endsWith(shortKo));
+
+                const exactFamilyMatches = incomingFamilyName
+                    ? candidates.filter(entity => entity.familyName === incomingFamilyName)
+                    : [];
+                const uniqueExactFamilyMatches = [...new Set(exactFamilyMatches.map(entity => entity.displayName))];
+                if (uniqueExactFamilyMatches.length === 1) return uniqueExactFamilyMatches[0];
+
+                if (!incomingFamilyName) {
+                    const uniqueMatches = [...new Set(candidates.map(entity => entity.displayName))];
+                    if (uniqueMatches.length === 1) return uniqueMatches[0];
+                }
             }
 
             const jpEnBase = normalizeBaseName(base);
@@ -6656,18 +7033,21 @@ Return JSON only.${STRICT_JSON_OUTPUT_RULES}`;
                 && /[A-Za-z\u3040-\u30ff\u31f0-\u31ff\u3400-\u4dbf\u4e00-\u9fff]/.test(jpEnBase);
             if (jpEnIsSingleToken) {
                 const matches = knownEntities
-                    .map(entity => normalizeBaseName(entity?.name || ''))
-                    .filter(Boolean)
-                    .filter(entityName => {
-                        const parts = getEnglishOrJapaneseNameParts(entityName);
-                        if (parts.length < 2) return false;
-                        return parts.some(part => normalizeBaseName(part).toLowerCase() === jpEnBase.toLowerCase());
-                    });
+                    .filter(entity => {
+                        const signatures = getNameTokenSignatures(entity?.name || '');
+                        if (signatures.length === 0) return false;
+                        return signatures.some(signature => {
+                            const tokens = signature.split(/\s+/).filter(Boolean);
+                            return tokens.length >= 2 && tokens.includes(jpEnBase.toLowerCase());
+                        });
+                    })
+                    .map(entity => normalizeCanonicalDisplayName(entity?.name || ''))
+                    .filter(Boolean);
                 const uniqueMatches = [...new Set(matches)];
                 if (uniqueMatches.length === 1) return uniqueMatches[0];
             }
 
-            return base;
+            return normalizeCanonicalDisplayName(name) || base;
         };
 
         const normalizeName = (name, lorebook = []) => {
@@ -6803,13 +7183,31 @@ Return JSON only.${STRICT_JSON_OUTPUT_RULES}`;
             if (!incomingEntity) return baseEntity;
             baseEntity.meta = baseEntity.meta || {};
             incomingEntity.meta = incomingEntity.meta || {};
+            const baseDisplayName = normalizeCanonicalDisplayName(baseEntity.name || '');
+            const incomingDisplayName = normalizeCanonicalDisplayName(incomingEntity.name || '');
+            const baseHasBilingual = !!extractBilingualNameParts(baseDisplayName);
+            const incomingHasBilingual = !!extractBilingualNameParts(incomingDisplayName);
+            if ((!baseHasBilingual && incomingHasBilingual) || (!baseDisplayName && incomingDisplayName)) {
+                baseEntity.name = incomingDisplayName;
+            } else if (baseDisplayName) {
+                baseEntity.name = baseDisplayName;
+            }
             const aliasSet = new Set([
                 ...(Array.isArray(baseEntity.meta.aliases) ? baseEntity.meta.aliases : []),
                 ...(Array.isArray(incomingEntity.meta.aliases) ? incomingEntity.meta.aliases : []),
                 normalizeBaseName(baseEntity.name || ''),
-                normalizeBaseName(incomingEntity.name || '')
+                normalizeBaseName(incomingEntity.name || ''),
+                normalizeCanonicalDisplayName(baseEntity.name || ''),
+                normalizeCanonicalDisplayName(incomingEntity.name || '')
             ].filter(Boolean));
             baseEntity.meta.aliases = [...aliasSet];
+            const hiddenNameKeySet = new Set([
+                ...(Array.isArray(baseEntity.meta.hiddenNameKeys) ? baseEntity.meta.hiddenNameKeys : []),
+                ...(Array.isArray(incomingEntity.meta.hiddenNameKeys) ? incomingEntity.meta.hiddenNameKeys : []),
+                ...buildHiddenNameKeys(baseEntity.name || ''),
+                ...buildHiddenNameKeys(incomingEntity.name || '')
+            ].filter(Boolean));
+            baseEntity.meta.hiddenNameKeys = [...hiddenNameKeySet];
 
             for (const key of ['features', 'distinctiveMarks', 'clothing']) {
                 baseEntity.appearance = baseEntity.appearance || {};
@@ -7003,6 +7401,9 @@ Return JSON only.${STRICT_JSON_OUTPUT_RULES}`;
 
         const normalizeEntityShape = (entity) => {
             if (!entity || typeof entity !== 'object') return entity;
+            entity.meta = entity.meta || {};
+            entity.meta.aliases = Array.isArray(entity.meta.aliases) ? entity.meta.aliases : [];
+            entity.meta.hiddenNameKeys = Array.isArray(entity.meta.hiddenNameKeys) ? entity.meta.hiddenNameKeys : [];
             entity.appearance = entity.appearance || {};
             entity.appearance.features = Array.isArray(entity.appearance.features) ? entity.appearance.features : [];
             entity.appearance.distinctiveMarks = Array.isArray(entity.appearance.distinctiveMarks) ? entity.appearance.distinctiveMarks : [];
@@ -7053,9 +7454,17 @@ Return JSON only.${STRICT_JSON_OUTPUT_RULES}`;
                     profile.meta = profile.meta || { created: 0, updated: 0, confidence: 0.5, source: '' };
                     if (!Array.isArray(profile.meta.m_ids) && profile.meta.m_id) profile.meta.m_ids = [profile.meta.m_id];
                     profile.meta.aliases = Array.isArray(profile.meta.aliases) ? profile.meta.aliases : [];
-                    if (name && normalizeBaseName(name) && !profile.meta.aliases.includes(normalizeBaseName(name)) && normalizeBaseName(name) !== normalizedName) {
-                        profile.meta.aliases.push(normalizeBaseName(name));
-                    }
+                    profile.meta.hiddenNameKeys = Array.isArray(profile.meta.hiddenNameKeys) ? profile.meta.hiddenNameKeys : [];
+                    extractNameVariantParts(name).forEach(alias => {
+                        if (alias && alias !== normalizedName && !profile.meta.aliases.includes(alias)) {
+                            profile.meta.aliases.push(alias);
+                        }
+                    });
+                    buildHiddenNameKeys(name).forEach(key => {
+                        if (key && !profile.meta.hiddenNameKeys.includes(key)) {
+                            profile.meta.hiddenNameKeys.push(key);
+                        }
+                    });
                     entityCache.set(normalizedName, profile);
                     return profile;
                 } catch {}
@@ -7069,7 +7478,14 @@ Return JSON only.${STRICT_JSON_OUTPUT_RULES}`;
                 personality: { traits: [], values: [], fears: [], likes: [], dislikes: [], sexualOrientation: '', sexualPreferences: [] },
                 background: { origin: '', occupation: '', history: [], secrets: [] },
                 status: { currentLocation: '', currentMood: '', healthStatus: '', lastUpdated: 0 },
-                meta: { created: MemoryState.currentTurn, updated: 0, confidence: 0.5, source: '', aliases: Array.from(new Set([normalizeBaseName(name)].filter(Boolean))) }
+                meta: {
+                    created: MemoryState.currentTurn,
+                    updated: 0,
+                    confidence: 0.5,
+                    source: '',
+                    aliases: Array.from(new Set(extractNameVariantParts(name).filter(alias => alias && alias !== normalizedName))),
+                    hiddenNameKeys: buildHiddenNameKeys(name)
+                }
             };
 
             entityCache.set(normalizedName, newEntity);
@@ -7123,12 +7539,19 @@ Return JSON only.${STRICT_JSON_OUTPUT_RULES}`;
             if (!entity) return null;
             entity.meta = entity.meta || { created: MemoryState.currentTurn, updated: 0, confidence: 0.5, source: '', aliases: [] };
             entity.meta.aliases = Array.isArray(entity.meta.aliases) ? entity.meta.aliases : [];
-            const incomingAlias = normalizeBaseName(name);
+            entity.meta.hiddenNameKeys = Array.isArray(entity.meta.hiddenNameKeys) ? entity.meta.hiddenNameKeys : [];
             const forceReplace = updates?.forceReplace === true || updates?.source === 'correction';
             const manualProtected = isManualProtected(entity.meta, updates);
-            if (incomingAlias && incomingAlias !== entity.name && !entity.meta.aliases.includes(incomingAlias)) {
-                entity.meta.aliases.push(incomingAlias);
-            }
+            extractNameVariantParts(name).forEach(incomingAlias => {
+                if (incomingAlias && incomingAlias !== entity.name && !entity.meta.aliases.includes(incomingAlias)) {
+                    entity.meta.aliases.push(incomingAlias);
+                }
+            });
+            buildHiddenNameKeys(name).forEach(hiddenKey => {
+                if (hiddenKey && !entity.meta.hiddenNameKeys.includes(hiddenKey)) {
+                    entity.meta.hiddenNameKeys.push(hiddenKey);
+                }
+            });
 
             const currentTurn = MemoryState.currentTurn;
             if (updates.m_id != null) {
@@ -7391,6 +7814,32 @@ Return JSON only.${STRICT_JSON_OUTPUT_RULES}`;
 
         const saveToLorebook = async (char, chat, lorebook) => {
             const currentTurn = MemoryState.currentTurn;
+            const liveEntityNames = new Set(Array.from(entityCache.keys()).filter(Boolean));
+            const liveRelationIds = new Set(Array.from(relationCache.keys()).filter(Boolean));
+
+            for (let i = lorebook.length - 1; i >= 0; i--) {
+                const entry = lorebook[i];
+                if (!entry || typeof entry !== 'object') continue;
+                try {
+                    if (entry.comment === ENTITY_COMMENT) {
+                        const parsed = JSON.parse(entry.content || '{}');
+                        const canonicalName = resolveCanonicalName(parsed.name || '', lorebook);
+                        if (!canonicalName || !liveEntityNames.has(canonicalName)) {
+                            lorebook.splice(i, 1);
+                        }
+                    } else if (entry.comment === RELATION_COMMENT) {
+                        const parsed = JSON.parse(entry.content || '{}');
+                        const relationId = parsed.id || makeRelationId(parsed.entityA || '', parsed.entityB || '', lorebook);
+                        if (!relationId || !liveRelationIds.has(relationId)) {
+                            lorebook.splice(i, 1);
+                        }
+                    }
+                } catch {
+                    if (entry.comment === ENTITY_COMMENT || entry.comment === RELATION_COMMENT) {
+                        lorebook.splice(i, 1);
+                    }
+                }
+            }
 
             for (const [name, entity] of entityCache) {
                 entity.meta = entity.meta || { created: currentTurn, updated: currentTurn, confidence: 0.5, source: '' };
@@ -8890,8 +9339,8 @@ Return JSON only.${STRICT_JSON_OUTPUT_RULES}`;
             directorMode: 'strong',
             sectionWorldInferenceEnabled: true,
             worldAdjustmentMode: 'dynamic',
-            llm: { provider: 'openai', url: '', key: '', model: 'gpt-4o-mini', temp: 0.3, timeout: 120000, reasoningEffort: 'none', reasoningBudgetTokens: DEFAULT_REASONING_BUDGET_TOKENS, maxCompletionTokens: DEFAULT_MAX_COMPLETION_TOKENS },
-            auxLlm: { enabled: false, provider: 'openai', url: '', key: '', model: 'gpt-4o-mini', temp: 0.2, timeout: 90000, reasoningEffort: 'none', reasoningBudgetTokens: DEFAULT_REASONING_BUDGET_TOKENS, maxCompletionTokens: DEFAULT_AUX_MAX_COMPLETION_TOKENS },
+            llm: { provider: 'openai', url: '', key: '', model: 'gpt-4o-mini', temp: 0.3, timeout: 120000, reasoningPreset: 'auto', reasoningEffort: 'none', reasoningBudgetTokens: DEFAULT_REASONING_BUDGET_TOKENS, maxCompletionTokens: DEFAULT_MAX_COMPLETION_TOKENS, glmThinkingType: 'enabled' },
+            auxLlm: { enabled: false, provider: 'openai', url: '', key: '', model: 'gpt-4o-mini', temp: 0.2, timeout: 90000, reasoningPreset: 'auto', reasoningEffort: 'none', reasoningBudgetTokens: DEFAULT_REASONING_BUDGET_TOKENS, maxCompletionTokens: DEFAULT_AUX_MAX_COMPLETION_TOKENS, glmThinkingType: 'enabled' },
             embed: { provider: 'openai', url: '', key: '', model: 'text-embedding-3-small', timeout: 120000 }
         };
 
@@ -9925,6 +10374,11 @@ Extract the following information from the conversation and output in JSON forma
    - background: { origin: "", occupation: "", history: [] }
    - status: { currentMood: "", currentLocation: "", healthStatus: "" }
 
+중요: 한글명, 영문명, 일본어명이 섞여 보여도 같은 인물을 가리키면 반드시 하나의 인물로 병합하십시오.
+If Korean, English, or Japanese variants refer to the same character, merge them into one entity instead of creating duplicates.
+이미 저장된 인물과 같은 사람이라면 기존 표기를 우선하고, 다른 언어 표기는 새 인물이 아니라 같은 인물의 별칭으로 취급하십시오.
+Prefer the existing stored spelling for the same person, and treat other language variants as aliases rather than new entities.
+
 2. 관계 정보 / Relationship Info (relations)
    - entityA, entityB: 인물 이름/Character names
    - relationType: 관계 유형/Relationship type
@@ -10892,6 +11346,63 @@ const findLatestUserMessage = (messages = []) => {
     }
     return null;
 };
+const normalizeRequestMessages = (messages = []) => {
+    const source = Array.isArray(messages) ? messages : [];
+    return source.map((msg) => {
+        if (!msg || typeof msg !== 'object') return null;
+        const rawRole = String(
+            msg.role
+            || msg.author
+            || msg.sender
+            || msg.type
+            || (msg.is_user ? 'user' : '')
+            || ''
+        ).trim().toLowerCase();
+        let role = rawRole;
+        if (role === 'assistant' || role === 'model' || role === 'ai' || role === 'bot') role = 'assistant';
+        else if (role === 'human' || role === 'input' || role === 'prompt') role = 'user';
+        else if (role === 'system' || role === 'developer') role = 'system';
+        else if (msg.is_user) role = 'user';
+        if (!role) return null;
+        let content = msg.content;
+        if (Array.isArray(content)) {
+            content = content
+                .map(part => {
+                    if (typeof part === 'string') return part;
+                    if (part && typeof part === 'object') return String(part.text || part.content || part.value || '').trim();
+                    return '';
+                })
+                .filter(Boolean)
+                .join('\n');
+        } else if (content && typeof content === 'object') {
+            content = String(content.text || content.content || content.value || '').trim();
+        }
+        if (content == null || content === '') {
+            content = String(msg.text || msg.message || msg.prompt || '').trim();
+        }
+        return { ...msg, role, content: String(content || '') };
+    }).filter(Boolean);
+};
+const extractRequestMessageContainer = (payload) => {
+    if (Array.isArray(payload)) {
+        return { kind: 'array', original: payload, messages: payload };
+    }
+    if (payload && typeof payload === 'object') {
+        if (Array.isArray(payload.messages)) return { kind: 'object', original: payload, messages: payload.messages, key: 'messages' };
+        if (Array.isArray(payload.input)) return { kind: 'object', original: payload, messages: payload.input, key: 'input' };
+        if (Array.isArray(payload.conversation)) return { kind: 'object', original: payload, messages: payload.conversation, key: 'conversation' };
+    }
+    return { kind: 'unknown', original: payload, messages: [] };
+};
+const rebuildRequestPayload = (container, nextMessages) => {
+    if (!container || container.kind === 'unknown') return nextMessages;
+    if (container.kind === 'array') return nextMessages;
+    const key = container.key || 'messages';
+    return {
+        ...(container.original || {}),
+        [key]: nextMessages
+    };
+};
 
 const resolveCanonicalUserPayload = (messages = []) => {
     const primary = buildCanonicalUserPayload(findLatestUserMessage(messages));
@@ -10964,8 +11475,12 @@ const reloadChatScopedRuntime = (lore, chatId = null, opts = {}) => {
 if (typeof risuai !== 'undefined') {
     // beforeRequest: OpenAI 메시지 배열에 컨텍스트 주입
     risuai.addRisuReplacer('beforeRequest', async (messages, type) => {
+        const requestContainer = extractRequestMessageContainer(messages);
         // 메시지 배열 유효성 검증
-        const safeMessages = (Array.isArray(messages) ? messages : []).filter(m => m && typeof m === 'object' && m.role);
+        const safeMessages = normalizeRequestMessages(requestContainer.messages);
+        if (MemoryEngine.CONFIG?.debug && safeMessages.length === 0 && Array.isArray(requestContainer.messages) && requestContainer.messages.length > 0) {
+            console.warn('[LIBRA] beforeRequest received messages, but none could be normalized for injection', requestContainer.messages);
+        }
         
         // Task 2-1: Skip if LightBoard/XNAI messages are found
         const shouldSkipLBXNAI = (msgs) => {
@@ -10991,7 +11506,7 @@ if (typeof risuai !== 'undefined') {
         if (shouldSkipLBXNAI(safeMessages)) {
             MemoryState._lbRequestInFlight = Date.now();
             if (MemoryEngine.CONFIG?.debug) console.log('[LIBRA] beforeRequest skipped: LightBoard/XNAI pattern detected');
-            return safeMessages;
+            return rebuildRequestPayload(requestContainer, safeMessages);
         }
 
         try {
@@ -10999,7 +11514,7 @@ if (typeof risuai !== 'undefined') {
                 if (MemoryEngine.CONFIG?.debug) {
                     console.log(`[LIBRA] beforeRequest skipped for non-primary request type: ${type}`);
                 }
-                return safeMessages;
+                return rebuildRequestPayload(requestContainer, safeMessages);
             }
             LIBRAActivityDashboard.beginRequest({
                 requestType: type,
@@ -11009,7 +11524,7 @@ if (typeof risuai !== 'undefined') {
             const char = await risuai.getCharacter();
             if (!char) {
                 LIBRAActivityDashboard.hide();
-                return safeMessages;
+                return rebuildRequestPayload(requestContainer, safeMessages);
             }
             let db = null; try { db = await risuai.getDatabase(); } catch {}
             EntityManager.refreshIdentity(char, db);
@@ -11017,7 +11532,7 @@ if (typeof risuai !== 'undefined') {
             const chat = char.chats?.[char.chatPage];
             if (!chat) {
                 LIBRAActivityDashboard.hide();
-                return safeMessages;
+                return rebuildRequestPayload(requestContainer, safeMessages);
             }
             tryRearmGreetingIsolation(chat);
 
@@ -11091,7 +11606,7 @@ if (typeof risuai !== 'undefined') {
                 _lastUserMessage = '';
                 _lastUserMessageRaw = '';
                 LIBRAActivityDashboard.hide();
-                return result;
+                return rebuildRequestPayload(requestContainer, result);
             }
 
             // 언급된 엔티티 찾기
@@ -11388,11 +11903,11 @@ if (typeof risuai !== 'undefined') {
 
             // Final safety filter to prevent RisuAI core crash
             const finalResult = (Array.isArray(result) ? result : []).filter(m => m && typeof m === 'object' && m.role);
-            return finalResult.length > 0 ? finalResult : safeMessages;
+            return rebuildRequestPayload(requestContainer, finalResult.length > 0 ? finalResult : safeMessages);
         } catch (e) {
             LIBRAActivityDashboard.fail(`컨텍스트 준비 실패: ${e?.message || e}`);
             console.error('[LIBRA] beforeRequest Error:', e?.message || e);
-            return safeMessages;
+            return rebuildRequestPayload(requestContainer, safeMessages);
         }
     });
 
@@ -11589,9 +12104,11 @@ const updateConfigFromArgs = async () => {
         model: getVal('model', 'llm_model', 'string', 'llm', 'gpt-4o-mini'),
         temp: getVal('temp', 'llm_temp', 'number', 'llm', 0.3),
         timeout: getVal('timeout', 'llm_timeout', 'number', 'llm', 120000),
+        reasoningPreset: getVal('reasoningPreset', 'llm_reasoning_preset', 'string', 'llm', 'auto'),
         reasoningEffort: getVal('reasoningEffort', 'llm_reasoning_effort', 'string', 'llm', 'none'),
         reasoningBudgetTokens: getVal('reasoningBudgetTokens', 'llm_reasoning_budget_tokens', 'number', 'llm', DEFAULT_REASONING_BUDGET_TOKENS),
-        maxCompletionTokens: getVal('maxCompletionTokens', 'llm_max_completion_tokens', 'number', 'llm', DEFAULT_MAX_COMPLETION_TOKENS)
+        maxCompletionTokens: getVal('maxCompletionTokens', 'llm_max_completion_tokens', 'number', 'llm', DEFAULT_MAX_COMPLETION_TOKENS),
+        glmThinkingType: getVal('glmThinkingType', 'llm_glm_thinking_type', 'string', 'llm', 'enabled')
     };
     cfg.auxLlm = {
         enabled: getVal('enabled', 'aux_llm_enabled', 'boolean', 'auxLlm', false),
@@ -11601,9 +12118,11 @@ const updateConfigFromArgs = async () => {
         model: getVal('model', 'aux_llm_model', 'string', 'auxLlm', cfg.llm.model || 'gpt-4o-mini'),
         temp: getVal('temp', 'aux_llm_temp', 'number', 'auxLlm', 0.2),
         timeout: getVal('timeout', 'aux_llm_timeout', 'number', 'auxLlm', 90000),
+        reasoningPreset: getVal('reasoningPreset', 'aux_llm_reasoning_preset', 'string', 'auxLlm', 'auto'),
         reasoningEffort: getVal('reasoningEffort', 'aux_llm_reasoning_effort', 'string', 'auxLlm', 'none'),
         reasoningBudgetTokens: getVal('reasoningBudgetTokens', 'aux_llm_reasoning_budget_tokens', 'number', 'auxLlm', DEFAULT_REASONING_BUDGET_TOKENS),
-        maxCompletionTokens: getVal('maxCompletionTokens', 'aux_llm_max_completion_tokens', 'number', 'auxLlm', DEFAULT_AUX_MAX_COMPLETION_TOKENS)
+        maxCompletionTokens: getVal('maxCompletionTokens', 'aux_llm_max_completion_tokens', 'number', 'auxLlm', DEFAULT_AUX_MAX_COMPLETION_TOKENS),
+        glmThinkingType: getVal('glmThinkingType', 'aux_llm_glm_thinking_type', 'string', 'auxLlm', 'enabled')
     };
     if (!cfg.auxLlm.enabled || !String(cfg.auxLlm.key || '').trim()) {
         cfg.auxLlm.enabled = false;
@@ -11630,7 +12149,8 @@ const updateConfigFromArgs = async () => {
 // Initialize
 (async () => {
     try {
-        console.log('[LIBRA] v3.5.1 Initializing...');
+        bindDashboardAutoShow();
+        console.log('[LIBRA] v3.5.1a Initializing...');
         await updateConfigFromArgs();
 
         if (typeof risuai !== 'undefined') {
@@ -11669,7 +12189,7 @@ const updateConfigFromArgs = async () => {
         TurnRecoveryEngine.startPolling();
         const activeCfg = MemoryEngine.CONFIG;
         const embedStatus = (activeCfg.embed?.url && activeCfg.embed?.key) ? `${activeCfg.embed.provider}/${activeCfg.embed.model}` : 'disabled (fallback to Jaccard)';
-        console.log(`[LIBRA] v3.5.1 Ready. LLM=${activeCfg.useLLM} | Mode=${activeCfg.weightMode} | Embed=${embedStatus}`);
+        console.log(`[LIBRA] v3.5.1a Ready. LLM=${activeCfg.useLLM} | Mode=${activeCfg.weightMode} | Embed=${embedStatus}`);
         
         // Memory Carry-Over 및 Cold Start 감지 실행
         if (typeof risuai !== 'undefined') {
@@ -11807,7 +12327,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
     const GUI_BODY = `
 <div class="gui-wrap">
 <div class="hdr">
-  <h1>📚 LIBRA World Manager <span style="font-size:0.7rem; font-weight:normal; opacity:0.5;">v3.5.1</span></h1>
+  <h1>📚 LIBRA World Manager <span style="font-size:0.7rem; font-weight:normal; opacity:0.5;">v3.5.1a</span></h1>
   <div class="tabs">
     <button class="tb on" data-tab="memory">📚 메모리</button>
     <button class="tb" data-tab="entity">👤 엔티티</button>
@@ -11924,8 +12444,11 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
         <div class="fld"><label>Model</label><input type="text" id="slm" placeholder="gpt-4o-mini"></div>
         <div class="fld"><label>Temperature</label><div class="rw"><input type="range" id="slt" min="0" max="1" step="0.1"><span id="sltv" class="rv">0.3</span></div></div>
         <div class="fld"><label>Timeout (ms)</label><input type="number" id="slto" placeholder="120000"></div>
-        <div class="fld"><label>Reasoning Effort</label><select id="slre"><option value="none">사용 안 함</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div>
-        <div class="fld"><label>Reasoning Budget Tokens</label><input type="number" id="slrb" placeholder="16384"></div>
+        <div class="fld"><label>Reasoning Preset</label><select id="slrp"><option value="auto">자동 감지</option><option value="gpt">GPT</option><option value="gemini">Gemini</option><option value="claude">Claude</option><option value="glm">GLM</option><option value="custom">커스텀</option></select></div>
+        <div class="fld"><label>Reasoning Guide</label><div id="slrh" style="font-size:11px;color:var(--text2);line-height:1.5;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,0.04)">모델 계열에 맞는 추론 설정을 자동 안내합니다.</div></div>
+        <div class="fld" id="slre-wrap"><label>Reasoning Effort</label><select id="slre"><option value="none">사용 안 함</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div>
+        <div class="fld" id="slrb-wrap"><label>Reasoning Budget Tokens</label><input type="number" id="slrb" placeholder="16384"></div>
+        <div class="fld" id="slgt-wrap"><label>GLM Thinking</label><select id="slgt"><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></div>
         <div class="fld"><label>Max Completion Tokens</label><input type="number" id="slmc" placeholder="16000"></div>
       </div>
       <div class="ss">
@@ -11937,8 +12460,11 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
         <div class="fld"><label>Model</label><input type="text" id="saxm" placeholder="gpt-4o-mini"></div>
         <div class="fld"><label>Temperature</label><div class="rw"><input type="range" id="saxt" min="0" max="1" step="0.1"><span id="saxtv" class="rv">0.2</span></div></div>
         <div class="fld"><label>Timeout (ms)</label><input type="number" id="saxto" placeholder="90000"></div>
-        <div class="fld"><label>Reasoning Effort</label><select id="saxre"><option value="none">사용 안 함</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div>
-        <div class="fld"><label>Reasoning Budget Tokens</label><input type="number" id="saxrb" placeholder="16384"></div>
+        <div class="fld"><label>Reasoning Preset</label><select id="saxrp"><option value="auto">자동 감지</option><option value="gpt">GPT</option><option value="gemini">Gemini</option><option value="claude">Claude</option><option value="glm">GLM</option><option value="custom">커스텀</option></select></div>
+        <div class="fld"><label>Reasoning Guide</label><div id="saxrh" style="font-size:11px;color:var(--text2);line-height:1.5;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,0.04)">모델 계열에 맞는 추론 설정을 자동 안내합니다.</div></div>
+        <div class="fld" id="saxre-wrap"><label>Reasoning Effort</label><select id="saxre"><option value="none">사용 안 함</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div>
+        <div class="fld" id="saxrb-wrap"><label>Reasoning Budget Tokens</label><input type="number" id="saxrb" placeholder="16384"></div>
+        <div class="fld" id="saxgt-wrap"><label>GLM Thinking</label><select id="saxgt"><option value="enabled">Enabled</option><option value="disabled">Disabled</option></select></div>
         <div class="fld"><label>Max Completion Tokens</label><input type="number" id="saxmc" placeholder="12000"></div>
       </div>
       <div class="ss">
@@ -12554,12 +13080,61 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
                 .filter(Boolean);
             const currentTurnBase = Math.max(1, Number(MemoryEngine.getCurrentTurn() || turnPairs.length));
             const profile = LLMProvider.isConfigured(config, 'primary') ? 'primary' : 'aux';
-            const isLengthFailure = (error) => /finishReason=length|EMPTY_RESPONSE|returned no text content/i.test(String(error?.message || error || ''));
+            const formatMemoryReanalysisSnippetBlock = (items, maxItems = 8, maxItemChars = 260) => {
+                const source = Array.isArray(items) ? items : [];
+                if (source.length === 0) return '(none)';
+                return source
+                    .slice(-Math.max(1, maxItems))
+                    .map((item, idx) => `#${idx + 1} ${truncateForLLM(String(item || ''), maxItemChars, ' ...[TRUNCATED]... ')}`)
+                    .join('\n');
+            };
+            const buildMemoryReanalysisPromptText = (pair, options = {}) => {
+                const {
+                    turnMaxChars = 5200,
+                    memoryMaxItems = 8,
+                    memoryMaxItemChars = 260
+                } = options;
+                const turnText = [
+                    pair?.userText ? `[User]\n${pair.userText}` : '',
+                    pair?.aiText ? `[Assistant]\n${pair.aiText}` : ''
+                ].filter(Boolean).join('\n\n');
+                return [
+                    `[Current Turn Pair]`,
+                    truncateForLLM(turnText, turnMaxChars, '\n...[TRUNCATED]...\n'),
+                    '',
+                    `[Existing Memory Snippets]`,
+                    formatMemoryReanalysisSnippetBlock(existingSnippets, memoryMaxItems, memoryMaxItemChars)
+                ].join('\n');
+            };
+            const buildMemoryReanalysisVerifyText = (pair, candidateText, similarItems, options = {}) => {
+                const {
+                    turnMaxChars = 4800,
+                    candidateMaxChars = 420,
+                    similarMaxItems = 3,
+                    similarMaxItemChars = 220
+                } = options;
+                const turnText = [
+                    pair?.userText ? `[User]\n${pair.userText}` : '',
+                    pair?.aiText ? `[Assistant]\n${pair.aiText}` : ''
+                ].filter(Boolean).join('\n\n');
+                return [
+                    `[Current Turn Pair]`,
+                    truncateForLLM(turnText, turnMaxChars, '\n...[TRUNCATED]...\n'),
+                    '',
+                    `[Candidate Memory]`,
+                    truncateForLLM(candidateText, candidateMaxChars, ' ...[TRUNCATED]... '),
+                    '',
+                    `[Existing Similar Memories]`,
+                    formatMemoryReanalysisSnippetBlock(similarItems, similarMaxItems, similarMaxItemChars)
+                ].join('\n');
+            };
+            const isLengthFailure = (error) => /finishReason=length|EMPTY_RESPONSE|returned no text content|API Error:\s*422|context(?:_| )length|maximum context length|too many tokens|prompt (?:is )?too long|input (?:is )?too long/i.test(String(error?.message || error || ''));
             const callMemoryReanalysisLLM = async (systemPrompt, userPrompt, options = {}) => {
                 const {
                     baseMaxTokens = 600,
                     fallbackContent = '{"memories":[]}',
-                    label = 'memory-reanalysis'
+                    label = 'memory-reanalysis',
+                    retryUserPrompt = ''
                 } = options;
                 try {
                     return await runMaintenanceLLM(() =>
@@ -12574,11 +13149,12 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
                     if (!isLengthFailure(error)) throw error;
                 }
                 try {
+                    const retryPrompt = String(retryUserPrompt || userPrompt || '');
                     return await runMaintenanceLLM(() =>
                         LLMProvider.call(
                             config,
                             systemPrompt,
-                            userPrompt,
+                            retryPrompt,
                             { maxTokens: Math.max(180, Math.floor(baseMaxTokens * 0.55)), profile, label: `${label}-retry`, suppressDashboardFailure: true }
                         )
                     , `${label}-retry`);
@@ -12599,14 +13175,16 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
                     pair.aiText ? `[Assistant]\n${pair.aiText}` : ''
                 ].filter(Boolean).join('\n\n');
                 if (!turnText.trim()) continue;
-
-                const candidateInput = [
-                    `[Current Turn Pair]`,
-                    turnText,
-                    '',
-                    `[Existing Memory Snippets]`,
-                    existingSnippets.length > 0 ? existingSnippets.slice(-8).map((item, idx) => `#${idx + 1} ${item}`).join('\n') : '(none)'
-                ].join('\n');
+                const candidateInput = buildMemoryReanalysisPromptText(pair, {
+                    turnMaxChars: 5200,
+                    memoryMaxItems: 8,
+                    memoryMaxItemChars: 260
+                });
+                const compactCandidateInput = buildMemoryReanalysisPromptText(pair, {
+                    turnMaxChars: 2600,
+                    memoryMaxItems: 4,
+                    memoryMaxItemChars: 150
+                });
 
                 const candidateResult = await callMemoryReanalysisLLM(
                     memoryReanalysisPrompt,
@@ -12614,7 +13192,8 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
                     {
                         baseMaxTokens: 900,
                         fallbackContent: '{"memories":[]}',
-                        label: `memory-reanalysis-candidate-${i + 1}`
+                        label: `memory-reanalysis-candidate-${i + 1}`,
+                        retryUserPrompt: compactCandidateInput
                     }
                 );
                 const parsed = extractStructuredJson(candidateResult?.content || '');
@@ -12637,23 +13216,26 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
                     const similarSnippets = (Array.isArray(similarExisting) ? similarExisting : [])
                         .map(entry => Utils.getMemorySourceText(stripMeta(entry.content || '')))
                         .filter(Boolean);
-                    const verifyInput = [
-                        `[Current Turn Pair]`,
-                        turnText,
-                        '',
-                        `[Candidate Memory]`,
-                        rawContent,
-                        '',
-                        `[Existing Similar Memories]`,
-                        similarSnippets.length > 0 ? similarSnippets.map((item, idx) => `#${idx + 1} ${item}`).join('\n') : '(none)'
-                    ].join('\n');
+                    const verifyInput = buildMemoryReanalysisVerifyText(pair, rawContent, similarSnippets, {
+                        turnMaxChars: 4800,
+                        candidateMaxChars: 420,
+                        similarMaxItems: 3,
+                        similarMaxItemChars: 220
+                    });
+                    const compactVerifyInput = buildMemoryReanalysisVerifyText(pair, rawContent, similarSnippets, {
+                        turnMaxChars: 2400,
+                        candidateMaxChars: 260,
+                        similarMaxItems: 2,
+                        similarMaxItemChars: 140
+                    });
                     const verifyResult = await callMemoryReanalysisLLM(
                         memoryReanalysisVerificationPrompt,
                         verifyInput,
                         {
                             baseMaxTokens: 500,
                             fallbackContent: '{"accept":false,"content":"","importance":5,"reason":"length fallback"}',
-                            label: `memory-reanalysis-verify-${i + 1}`
+                            label: `memory-reanalysis-verify-${i + 1}`,
+                            retryUserPrompt: compactVerifyInput
                         }
                     );
                     const verified = extractStructuredJson(verifyResult?.content || '');
@@ -13396,6 +13978,64 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
             overlay.querySelector("#swr").value = resolved.recency;
             overlay.querySelector("#wrv").textContent = parseFloat(resolved.recency).toFixed(2);
         };
+        const getReasoningUiSelectors = (prefix) => ({
+            preset: `#${prefix}rp`,
+            provider: prefix === 'sl' ? '#slp' : '#saxp',
+            url: prefix === 'sl' ? '#slu' : '#saxu',
+            model: prefix === 'sl' ? '#slm' : '#saxm',
+            effort: `#${prefix}re`,
+            budget: `#${prefix}rb`,
+            maxCompletion: `#${prefix}mc`,
+            glmThinking: `#${prefix}gt`,
+            hint: `#${prefix}rh`,
+            effortWrap: `#${prefix}re-wrap`,
+            budgetWrap: `#${prefix}rb-wrap`,
+            glmWrap: `#${prefix}gt-wrap`
+        });
+        const detectReasoningFamilyFromUI = (prefix) => {
+            const ids = getReasoningUiSelectors(prefix);
+            return detectReasoningFamily({
+                provider: overlay.querySelector(ids.provider)?.value || '',
+                url: overlay.querySelector(ids.url)?.value || '',
+                model: overlay.querySelector(ids.model)?.value || ''
+            });
+        };
+        const syncReasoningPresetUi = (prefix, options = {}) => {
+            const ids = getReasoningUiSelectors(prefix);
+            const presetSelect = overlay.querySelector(ids.preset);
+            if (!presetSelect) return;
+            const selectedPreset = String(presetSelect.value || 'auto').toLowerCase();
+            const activeFamily = selectedPreset === 'auto' ? detectReasoningFamilyFromUI(prefix) : selectedPreset;
+            const presetDef = getReasoningPresetDefinition(selectedPreset === 'auto' ? activeFamily : selectedPreset);
+            const hintEl = overlay.querySelector(ids.hint);
+            if (hintEl) {
+                const autoNotice = selectedPreset === 'auto' ? `자동 감지 결과: ${presetDef.label}` : `현재 프리셋: ${presetDef.label}`;
+                hintEl.textContent = `${autoNotice} · ${presetDef.hint}`;
+            }
+            const showEffort = activeFamily === 'gpt' || selectedPreset === 'custom';
+            const showBudget = activeFamily === 'gemini' || activeFamily === 'claude' || selectedPreset === 'custom';
+            const showGlm = activeFamily === 'glm' || selectedPreset === 'custom';
+            const effortWrap = overlay.querySelector(ids.effortWrap);
+            const budgetWrap = overlay.querySelector(ids.budgetWrap);
+            const glmWrap = overlay.querySelector(ids.glmWrap);
+            if (effortWrap) effortWrap.style.display = showEffort ? '' : 'none';
+            if (budgetWrap) budgetWrap.style.display = showBudget ? '' : 'none';
+            if (glmWrap) glmWrap.style.display = showGlm ? '' : 'none';
+            if (options.applyPresetValues) {
+                const presetValues = getReasoningPresetDefinition(activeFamily);
+                const effortEl = overlay.querySelector(ids.effort);
+                const budgetEl = overlay.querySelector(ids.budget);
+                const maxCompletionEl = overlay.querySelector(ids.maxCompletion);
+                const glmThinkingEl = overlay.querySelector(ids.glmThinking);
+                if (effortEl) effortEl.value = presetValues.reasoningEffort || 'none';
+                if (budgetEl) budgetEl.value = Number(presetValues.reasoningBudgetTokens || 0);
+                if (maxCompletionEl) {
+                    const fallbackMax = prefix === 'sl' ? DEFAULT_MAX_COMPLETION_TOKENS : DEFAULT_AUX_MAX_COMPLETION_TOKENS;
+                    maxCompletionEl.value = Number(presetValues.maxCompletionTokens || fallbackMax);
+                }
+                if (glmThinkingEl) glmThinkingEl.value = presetValues.glmThinkingType || 'enabled';
+            }
+        };
         const buildSettingsConfigFromUI = () => {
             const customWeights = normalizeWeights({
                 similarity: parseFloat(overlay.querySelector("#sws").value) || WEIGHT_MODE_PRESETS.auto.similarity,
@@ -13437,9 +14077,11 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
                     model: overlay.querySelector("#slm").value,
                     temp: parseFloat(overlay.querySelector("#slt").value) || 0.3,
                     timeout: parseInt(overlay.querySelector("#slto").value) || 120000,
+                    reasoningPreset: overlay.querySelector("#slrp").value || "auto",
                     reasoningEffort: overlay.querySelector("#slre").value || "none",
                     reasoningBudgetTokens: parseInt(overlay.querySelector("#slrb").value) || DEFAULT_REASONING_BUDGET_TOKENS,
-                    maxCompletionTokens: parseInt(overlay.querySelector("#slmc").value) || DEFAULT_MAX_COMPLETION_TOKENS
+                    maxCompletionTokens: parseInt(overlay.querySelector("#slmc").value) || DEFAULT_MAX_COMPLETION_TOKENS,
+                    glmThinkingType: overlay.querySelector("#slgt").value || "enabled"
                 },
                 auxLlm: {
                     enabled: overlay.querySelector("#sax").checked,
@@ -13449,9 +14091,11 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
                     model: overlay.querySelector("#saxm").value,
                     temp: parseFloat(overlay.querySelector("#saxt").value) || 0.2,
                     timeout: parseInt(overlay.querySelector("#saxto").value) || 90000,
+                    reasoningPreset: overlay.querySelector("#saxrp").value || "auto",
                     reasoningEffort: overlay.querySelector("#saxre").value || "none",
                     reasoningBudgetTokens: parseInt(overlay.querySelector("#saxrb").value) || DEFAULT_REASONING_BUDGET_TOKENS,
-                    maxCompletionTokens: parseInt(overlay.querySelector("#saxmc").value) || DEFAULT_AUX_MAX_COMPLETION_TOKENS
+                    maxCompletionTokens: parseInt(overlay.querySelector("#saxmc").value) || DEFAULT_AUX_MAX_COMPLETION_TOKENS,
+                    glmThinkingType: overlay.querySelector("#saxgt").value || "enabled"
                 },
                 embed: {
                     provider: overlay.querySelector("#sep").value,
@@ -13500,9 +14144,11 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
             overlay.querySelector("#slm").value = (c.llm && c.llm.model) || "gpt-4o-mini";
             const t = overlay.querySelector("#slt"); t.value = (c.llm && c.llm.temp) || 0.3; overlay.querySelector("#sltv").textContent = t.value;
             overlay.querySelector("#slto").value = (c.llm && c.llm.timeout) || 120000;
+            overlay.querySelector("#slrp").value = (c.llm && c.llm.reasoningPreset) || "auto";
             overlay.querySelector("#slre").value = (c.llm && c.llm.reasoningEffort) || "none";
             overlay.querySelector("#slrb").value = (c.llm && c.llm.reasoningBudgetTokens) || DEFAULT_REASONING_BUDGET_TOKENS;
             overlay.querySelector("#slmc").value = (c.llm && c.llm.maxCompletionTokens) || DEFAULT_MAX_COMPLETION_TOKENS;
+            overlay.querySelector("#slgt").value = (c.llm && c.llm.glmThinkingType) || "enabled";
             overlay.querySelector("#sax").checked = !!(c.auxLlm && c.auxLlm.enabled);
             overlay.querySelector("#saxp").value = (c.auxLlm && c.auxLlm.provider) || (c.llm && c.llm.provider) || "openai";
             overlay.querySelector("#saxu").value = (c.auxLlm && c.auxLlm.url) || "";
@@ -13510,9 +14156,13 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
             overlay.querySelector("#saxm").value = (c.auxLlm && c.auxLlm.model) || (c.llm && c.llm.model) || "gpt-4o-mini";
             const at = overlay.querySelector("#saxt"); at.value = (c.auxLlm && c.auxLlm.temp) || 0.2; overlay.querySelector("#saxtv").textContent = at.value;
             overlay.querySelector("#saxto").value = (c.auxLlm && c.auxLlm.timeout) || 90000;
+            overlay.querySelector("#saxrp").value = (c.auxLlm && c.auxLlm.reasoningPreset) || "auto";
             overlay.querySelector("#saxre").value = (c.auxLlm && c.auxLlm.reasoningEffort) || "none";
             overlay.querySelector("#saxrb").value = (c.auxLlm && c.auxLlm.reasoningBudgetTokens) || DEFAULT_REASONING_BUDGET_TOKENS;
             overlay.querySelector("#saxmc").value = (c.auxLlm && c.auxLlm.maxCompletionTokens) || DEFAULT_AUX_MAX_COMPLETION_TOKENS;
+            overlay.querySelector("#saxgt").value = (c.auxLlm && c.auxLlm.glmThinkingType) || "enabled";
+            syncReasoningPresetUi('sl');
+            syncReasoningPresetUi('sax');
             overlay.querySelector("#scbs").checked = c.cbsEnabled !== false;
             overlay.querySelector("#slrag").checked = c.useLorebookRAG !== false;
             overlay.querySelector("#semo").checked = c.emotionEnabled !== false;
@@ -13586,6 +14236,16 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
             if (presetKey === 'custom') return;
             applyMemoryPresetToUI(presetKey);
         };
+        ['#slp', '#slu', '#slm'].forEach(id => {
+            overlay.querySelector(id).addEventListener('change', () => syncReasoningPresetUi('sl'));
+            overlay.querySelector(id).addEventListener('input', () => syncReasoningPresetUi('sl'));
+        });
+        ['#saxp', '#saxu', '#saxm'].forEach(id => {
+            overlay.querySelector(id).addEventListener('change', () => syncReasoningPresetUi('sax'));
+            overlay.querySelector(id).addEventListener('input', () => syncReasoningPresetUi('sax'));
+        });
+        overlay.querySelector('#slrp').onchange = () => syncReasoningPresetUi('sl', { applyPresetValues: true });
+        overlay.querySelector('#saxrp').onchange = () => syncReasoningPresetUi('sax', { applyPresetValues: true });
         overlay.querySelector('#btn-import-hypa-v3').onclick = importHypaV3ToLorebook;
         overlay.querySelector('#btn-add-user-lorebook').onclick = async () => {
             try {
@@ -13848,7 +14508,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
 
         overlay.querySelector('#btn-reset-settings').onclick = () => {
             if (!confirm("모든 설정을 초기값으로 되돌리시겠습니까?")) return;
-            _CFG = { useLLM: true, cbsEnabled: true, useLorebookRAG: true, emotionEnabled: true, illustrationModuleCompatEnabled: false, nsfwEnabled: false, preventUserIgnoreEnabled: false, storyAuthorEnabled: true, storyAuthorMode: "proactive", directorEnabled: true, directorMode: "strong", sectionWorldInferenceEnabled: true, debug: false, memoryPreset: "general", maxLimit: MEMORY_PRESETS.general.maxLimit, threshold: MEMORY_PRESETS.general.threshold, simThreshold: MEMORY_PRESETS.general.simThreshold, gcBatchSize: MEMORY_PRESETS.general.gcBatchSize, coldStartScopePreset: "all", coldStartHistoryLimit: 0, weightMode: "auto", worldAdjustmentMode: "dynamic", llm: { provider: "openai", url: "", key: "", model: "gpt-4o-mini", temp: 0.3, timeout: 120000, reasoningEffort: "none", reasoningBudgetTokens: DEFAULT_REASONING_BUDGET_TOKENS, maxCompletionTokens: DEFAULT_MAX_COMPLETION_TOKENS }, auxLlm: { enabled: false, provider: "openai", url: "", key: "", model: "gpt-4o-mini", temp: 0.2, timeout: 90000, reasoningEffort: "none", reasoningBudgetTokens: DEFAULT_REASONING_BUDGET_TOKENS, maxCompletionTokens: DEFAULT_AUX_MAX_COMPLETION_TOKENS }, embed: { provider: "openai", url: "", key: "", model: "text-embedding-3-small", timeout: 120000 } };
+            _CFG = { useLLM: true, cbsEnabled: true, useLorebookRAG: true, emotionEnabled: true, illustrationModuleCompatEnabled: false, nsfwEnabled: false, preventUserIgnoreEnabled: false, storyAuthorEnabled: true, storyAuthorMode: "proactive", directorEnabled: true, directorMode: "strong", sectionWorldInferenceEnabled: true, debug: false, memoryPreset: "general", maxLimit: MEMORY_PRESETS.general.maxLimit, threshold: MEMORY_PRESETS.general.threshold, simThreshold: MEMORY_PRESETS.general.simThreshold, gcBatchSize: MEMORY_PRESETS.general.gcBatchSize, coldStartScopePreset: "all", coldStartHistoryLimit: 0, weightMode: "auto", worldAdjustmentMode: "dynamic", llm: { provider: "openai", url: "", key: "", model: "gpt-4o-mini", temp: 0.3, timeout: 120000, reasoningPreset: "auto", reasoningEffort: "none", reasoningBudgetTokens: DEFAULT_REASONING_BUDGET_TOKENS, maxCompletionTokens: DEFAULT_MAX_COMPLETION_TOKENS, glmThinkingType: "enabled" }, auxLlm: { enabled: false, provider: "openai", url: "", key: "", model: "gpt-4o-mini", temp: 0.2, timeout: 90000, reasoningPreset: "auto", reasoningEffort: "none", reasoningBudgetTokens: DEFAULT_REASONING_BUDGET_TOKENS, maxCompletionTokens: DEFAULT_AUX_MAX_COMPLETION_TOKENS, glmThinkingType: "enabled" }, embed: { provider: "openai", url: "", key: "", model: "text-embedding-3-small", timeout: 120000 } };
             loadSettings(); toast("🔄 설정 초기화됨");
         };
 
