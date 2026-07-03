@@ -1,0 +1,141 @@
+{
+  "schema": "libra.world-manager.build-manifest.v1",
+  "source": "src/parts",
+  "output": "dist/LIBRA World Manager.js",
+  "minifiedOutput": "dist/LIBRA World Manager.min.js",
+  "lineEndingPolicy": "preserve fragments as UTF-8 text; chunks join without separators",
+  "generatedFrom": "LIBRA World Manager GLM.js promoted as canonical, resplit by previous feature boundaries, updated with RE Companion V2-style one-pass canonicalPacket analysis, aligned cold-start and GUI reanalysis to unified canonicalPacket flow, simplified entity/person GUI to canonicalPacket-reliable basic card fields, clarified memory/narrative roles, trimmed sparse relation/current-location GUI fields, added cold-start narrative turn coverage reconciliation, and separated persistent world canon fields from transient world state",
+  "canonicalSha256": "13262d8012c3f58ddfce84142326b04e22bf73a805157233a9b5d4cfb74adb25",
+  "isolatedPreviousSplitSource": "isolated_src/20260624_151823.legacy-src-before-glm-canonical",
+  "isolatedSingleMirrorSource": "isolated_src/20260624_152718.single-canonical-src-before-resplit",
+  "parts": [
+    {
+      "file": "parts/00-plugin-shell-and-args.js",
+      "area": "Plugin shell and RisuAI arg declarations",
+      "sourceLines": [
+        1,
+        158
+      ]
+    },
+    {
+      "file": "parts/01-core-runtime-compat-state-debug.js",
+      "area": "Core errors, Risu compatibility, MemoryState, diagnostics, toast, lore consolidation",
+      "sourceLines": [
+        159,
+        3078
+      ]
+    },
+    {
+      "file": "parts/02-concurrency-dashboard-utilities.js",
+      "area": "RWLock, task queues, Flex runtime, activity dashboard",
+      "sourceLines": [
+        3079,
+        4979
+      ]
+    },
+    {
+      "file": "parts/03-global-utils-codec-cues.js",
+      "area": "Global utilities, compact memory codec, character/source cue indexes",
+      "sourceLines": [
+        4980,
+        9232
+      ]
+    },
+    {
+      "file": "parts/04-cold-start-transition.js",
+      "area": "Cold start analysis and transition manager",
+      "sourceLines": [
+        9233,
+        13143
+      ]
+    },
+    {
+      "file": "parts/05-rollback-turn-commit.js",
+      "area": "Sync rollback, snapshots, rollback journal, turn ledger, pending commits",
+      "sourceLines": [
+        13144,
+        18668
+      ]
+    },
+    {
+      "file": "parts/06-api-providers-llm.js",
+      "area": "LRU cache, API providers, Flex policy, LLM provider facade",
+      "sourceLines": [
+        18669,
+        20440
+      ]
+    },
+    {
+      "file": "parts/07-token-recall-embedding-emotion.js",
+      "area": "Tokenizer/hash, sparse recall, Korean text, embeddings, emotion engine",
+      "sourceLines": [
+        20441,
+        21457
+      ]
+    },
+    {
+      "file": "parts/08-world-entity-secret-time.js",
+      "area": "World templates, world graph, entities, POV secrets, time engine",
+      "sourceLines": [
+        21458,
+        27993
+      ]
+    },
+    {
+      "file": "parts/09-trackers-section-state.js",
+      "area": "Narrative tracker, maintenance optimizer, section/character/world state trackers",
+      "sourceLines": [
+        27994,
+        31409
+      ]
+    },
+    {
+      "file": "parts/10-memory-engine-hme.js",
+      "area": "MemoryEngine facade/core and Hybrid Memory Engine internals",
+      "sourceLines": [
+        31410,
+        37243
+      ]
+    },
+    {
+      "file": "parts/11-translation-reflection-cbs.js",
+      "area": "Internal data translation, source reflection, CBS engine",
+      "sourceLines": [
+        37244,
+        38475
+      ]
+    },
+    {
+      "file": "parts/12-processors-world-entity.js",
+      "area": "Complex world detection, entity extraction/aware processing, world adjustment",
+      "sourceLines": [
+        38476,
+        40874
+      ]
+    },
+    {
+      "file": "parts/13-risu-triggers-streaming.js",
+      "area": "RisuAI before/after request hooks, streaming compatibility, unload cleanup",
+      "sourceLines": [
+        40875,
+        45615
+      ]
+    },
+    {
+      "file": "parts/14-main-initialization.js",
+      "area": "Config loading and main initialization",
+      "sourceLines": [
+        45616,
+        45961
+      ]
+    },
+    {
+      "file": "parts/15-gui-and-exports.js",
+      "area": "GUI, dashboard controls, public globals, IIFE close",
+      "sourceLines": [
+        45962,
+        52558
+      ]
+    }
+  ]
+}

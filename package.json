@@ -1,0 +1,12 @@
+{
+  "name": "libra-world-manager-v5",
+  "private": true,
+  "version": "5.3.1",
+  "scripts": {
+    "build": "node tools/build-libra-world-manager.cjs",
+    "check": "node --check \"dist/LIBRA World Manager.js\" && node --check \"dist/LIBRA World Manager.min.js\""
+  },
+  "devDependencies": {
+    "terser": "^5.48.0"
+  }
+}
